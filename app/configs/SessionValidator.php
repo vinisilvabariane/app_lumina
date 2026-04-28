@@ -1,23 +1,24 @@
 <?php
-require_once($_SERVER["DOCUMENT_ROOT"] . "/app/configs/Connection.php");
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/user/UserModel.php';
 
 class SessionValidator
 {
-    private Connection $connection;
-    private PDO $pdo;
+    private UserModel $userModel;
 
     public function __construct()
     {
-        $this->connection = new Connection;
-        $this->pdo = $this->connection->getConnection();
+        $this->userModel = new UserModel();
     }
 
-    public function startSession()
+    public function startSession(): void
     {
-        if (session_status() === PHP_SESSION_NONE) session_start();
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
     }
 
-    public function sessionValidate()
+    public function sessionValidate(): void
     {
         $this->startSession();
 
@@ -32,44 +33,26 @@ class SessionValidator
         $this->sessionIdValidate();
     }
 
-    public function sessionIdValidate()
+    public function sessionIdValidate(): void
     {
         $this->startSession();
 
         try {
-            $stmt = $this->pdo->prepare("SELECT
-            U.SESSION_ID 'session_id'
-            FROM users U
-            WHERE U.STATUS = 1 AND U.ID = :idUsuario");
-            $stmt->bindParam(':idUsuario', $_SESSION['id'], PDO::PARAM_INT);
-            $stmt->execute();
-            $sessionID = $stmt->fetchColumn();
-        } catch (PDOException $e) {
+            $sessionId = $this->userModel->buscarSessionIdAtivo((int) $_SESSION['id']);
+        } catch (PDOException $exception) {
             return;
         }
 
-        if ($sessionID === false) {
+        if ($sessionId === null) {
             $this->logout();
         }
 
-        if (empty($sessionID)) {
-            $this->atualizarSessionId((int) $_SESSION['id'], session_id());
+        if ($sessionId === '') {
+            $this->userModel->atualizarSessionId((int) $_SESSION['id'], session_id());
         }
     }
 
-    private function atualizarSessionId(int $userId, string $sessionId): void
-    {
-        try {
-            $stmt = $this->pdo->prepare("UPDATE users SET SESSION_ID = :sessionId WHERE ID = :userId");
-            $stmt->bindParam(':sessionId', $sessionId);
-            $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
-            $stmt->execute();
-        } catch (PDOException $e) {
-            return;
-        }
-    }
-
-    public function logout()
+    public function logout(): void
     {
         $this->startSession();
 
@@ -78,12 +61,14 @@ class SessionValidator
         session_write_close();
         setcookie(session_name(), '', 0, '/');
 
-        if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
 
-        header("Cache-Control: no-cache, no-store, must-revalidate");
-        header("Pragma: no-cache");
-        header("Expires: 0");
-        header("location:" . "/app/views/login/index.php");
-        exit();
+        header('Cache-Control: no-cache, no-store, must-revalidate');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+        header('location:/app/views/login/index.php');
+        exit;
     }
 }

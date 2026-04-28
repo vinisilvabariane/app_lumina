@@ -1,535 +1,683 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-require_once($_SERVER["DOCUMENT_ROOT"] . "/app/configs/Authenticator.php");
-require_once($_SERVER["DOCUMENT_ROOT"] . "/app/models/workflow/WorkFlowModel.php");
 
-class WorkFlowController
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Connection.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/controllers/BaseController.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/user/UserModel.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/workflow/WorkflowModel.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/workflow/WorkflowResponsavelModel.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/workflow/WorkflowEtapaModel.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/workflow/WorkflowAnexoModel.php';
+
+class WorkFlowController extends BaseController
 {
-    private $model;
+    private PDO $pdo;
+    private UserModel $userModel;
+    private WorkflowModel $workflowModel;
+    private WorkflowResponsavelModel $responsavelModel;
+    private WorkflowEtapaModel $etapaModel;
+    private WorkflowAnexoModel $anexoModel;
 
     public function __construct()
     {
-        $this->model = new WorkFlowModel();
+        $this->ensureSessionStarted();
+
+        $this->pdo = (new Connection())->getConnection();
+        $this->userModel = new UserModel($this->pdo);
+        $this->workflowModel = new WorkflowModel($this->pdo);
+        $this->responsavelModel = new WorkflowResponsavelModel($this->pdo);
+        $this->etapaModel = new WorkflowEtapaModel($this->pdo);
+        $this->anexoModel = new WorkflowAnexoModel($this->pdo);
     }
 
-    /*
-    FUNÇÕES NA BASE DE USUÁRIOS
-    */
-
-    //Carrega todos os usuários
-    public function carregarUsuarios()
+    public function carregarUsuarios(): void
     {
         try {
-            $usuarios = $this->model->carregarUsuarios();
-            $this->envioRespostaSucesso($usuarios);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(500, 'Erro ao buscar usuários: ' . $e->getMessage());
+            $this->respondSuccess($this->userModel->carregarUsuariosAtivos());
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao buscar usuarios: ' . $exception->getMessage(), 500);
         }
     }
 
-    /*
-    FUNÇÕES NA BASE DE WORKFLOWS
-    */
-
-    //Carrega workflows com base no filtro
-    public function getWorkFlow($filter)
+    public function getWorkFlow(string $filter): void
     {
         try {
-            if (!isset($_SESSION['id'])) {
-                throw new Exception('Usuário não autenticado');
-            }
-            $userId = (int)$_SESSION['id'];
-            $workflows = $this->model->getWorkFlow($filter, $userId);
-            $this->envioRespostaSucesso($workflows);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(401, 'Erro ao buscar workflows: ' . $e->getMessage());
+            $workflows = $this->workflowModel->listarPorFiltro($filter, $this->getSessionUserId());
+            $this->respondSuccess($workflows);
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao buscar workflows: ' . $exception->getMessage(), 401);
         }
     }
 
-    //Carrega etapas de um workflow específico
-    public function getEtapas($workflowId)
+    public function getEtapas($workflowId): void
     {
         try {
-            $etapas = $this->model->getEtapas($workflowId);
-            if ($etapas) {
-                echo json_encode([
-                    'success' => true,
-                    'data' => $etapas
-                ]);
-            } else {
-                echo json_encode([
+            $etapas = $this->etapaModel->listarPorWorkflowId((int) $workflowId);
+
+            if ($etapas === []) {
+                $this->respondJson([
                     'success' => false,
                     'message' => 'Nenhuma etapa encontrada'
                 ]);
-                return null;
             }
-            return $etapas;
-        } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'Erro ao buscar etapas: ' . $e->getMessage()
+
+            $this->respondJson([
+                'success' => true,
+                'data' => $etapas
             ]);
+        } catch (Throwable $exception) {
+            $this->respondJson([
+                'success' => false,
+                'message' => 'Erro ao buscar etapas: ' . $exception->getMessage()
+            ], 500);
         }
     }
 
-    //Valida se o usuário é o proprietário
-    public function getValidateOwner($workflowId)
+    public function getValidateOwner($workflowId): void
     {
         try {
             if (!is_numeric($workflowId)) {
-                return $this->envioRespostaErro(400, 'ID do workflow inválido');
+                $this->respondError('ID do workflow invalido', 400);
             }
-            $owner = $this->model->getValidateOwner($workflowId);
+
+            $owner = $this->workflowModel->buscarDono((int) $workflowId);
             if (!$owner) {
-                return $this->envioRespostaErro(404, 'Workflow não encontrado');
+                $this->respondError('Workflow nao encontrado', 404);
             }
-            $isOwner = $owner['usuario_criador'] == $_SESSION['id'];
-            return $this->envioRespostaSucesso(['isOwner' => $isOwner]);
-        } catch (Exception $e) {
-            return $this->envioRespostaErro(500, 'Erro ao validar proprietário: ' . $e->getMessage());
+
+            $this->respondSuccess([
+                'isOwner' => (int) $owner['usuario_criador'] === $this->getSessionUserId()
+            ]);
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao validar proprietario: ' . $exception->getMessage(), 500);
         }
     }
 
-    // Verifica se o workflow está em revisão e de quem é a revisão
     public function verificaRevisaoWorkflow(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            if (empty($input['workflowId'])) {
-                throw new Exception('ID do workflow não informado');
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+
+            if ($workflowId <= 0) {
+                throw new Exception('ID do workflow nao informado');
             }
-            $workflowId = (int)$input['workflowId'];
-            $revisao = $this->model->verificaRevisao($workflowId);
-            $this->envioRespostaSucesso([
-                'message' => 'Verificação de revisão concluída',
+
+            $revisao = $this->etapaModel->verificarRevisao($workflowId);
+            $this->respondSuccess([
+                'message' => 'Verificacao de revisao concluida',
                 'etapas_em_revisao' => $revisao['etapas_em_revisao'],
                 'total_etapas_revisao' => $revisao['total_etapas_revisao']
             ]);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, "Erro ao verificar etapa de revisão: " . $e->getMessage());
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao verificar etapa de revisao: ' . $exception->getMessage(), 400);
         }
     }
 
-    //Verifica se para o usuario consta reprovacao
-    public function verificaReprovacaoUsuario()
+    public function verificaReprovacaoUsuario(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            if (empty($input['workflowId'])) {
-                throw new Exception('ID do workflow não informado');
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+
+            if ($workflowId <= 0) {
+                throw new Exception('ID do workflow nao informado');
             }
-            $workflowId = (int)$input['workflowId'];
-            $usuarioId = $_SESSION['id'];
-            $temReprovacao = $this->model->verificaReprovacaoUsuario($workflowId, $usuarioId);
-            $this->envioRespostaSucesso([
-                'message' => 'Verificação concluída',
-                'temReprovacao' => (int)$temReprovacao
+
+            $temReprovacao = $this->etapaModel->verificarReprovacaoUsuario($workflowId, $this->getSessionUserId());
+            $this->respondSuccess([
+                'message' => 'Verificacao concluida',
+                'temReprovacao' => (int) $temReprovacao
             ]);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, "Erro ao verificar se o usuário já rejeitou: " . $e->getMessage());
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao verificar se o usuario ja rejeitou: ' . $exception->getMessage(), 400);
         }
     }
 
-    //Verifica se para o usuario consta aprovacao
-    public function verificaAprovacaoUsuario()
+    public function verificaAprovacaoUsuario(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            if (empty($input['workflowId'])) {
-                throw new Exception('ID do workflow não informado');
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+
+            if ($workflowId <= 0) {
+                throw new Exception('ID do workflow nao informado');
             }
-            $workflowId = (int)$input['workflowId'];
-            $usuarioId = $_SESSION['id'];
-            $temAprovacao = $this->model->verificaAprovacaoUsuario($workflowId, $usuarioId);
-            $this->envioRespostaSucesso([
-                'message' => 'Verificação concluída',
-                'temAprovacao' => (int)$temAprovacao
+
+            $temAprovacao = $this->etapaModel->verificarAprovacaoUsuario($workflowId, $this->getSessionUserId());
+            $this->respondSuccess([
+                'message' => 'Verificacao concluida',
+                'temAprovacao' => (int) $temAprovacao
             ]);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, "Erro ao verificar se o usuário já aprovou: " . $e->getMessage());
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao verificar se o usuario ja aprovou: ' . $exception->getMessage(), 400);
         }
     }
 
-    //Verifica se o usuario faz parte dos responsaveis do workflow
-    public function validarResponsavel()
+    public function validarResponsavel(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = isset($input['workflowId']) ? (int)$input['workflowId'] : 0;
-            $usuarioId = $_SESSION['id'];
-            $responsaveis = $this->model->carregarResponsaveisPorWorkflowId($workflowId);
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+            $usuarioId = $this->getSessionUserId();
+
+            $responsaveis = $this->responsavelModel->listarPorWorkflowId($workflowId);
             $usuarioEhResponsavel = false;
+
             foreach ($responsaveis as $responsavel) {
-                if ($responsavel['usuario_id'] == $usuarioId) {
+                if ((int) $responsavel['usuario_id'] === $usuarioId) {
                     $usuarioEhResponsavel = true;
                     break;
                 }
             }
-            return $this->envioRespostaSucesso(['isResponsavel' => $usuarioEhResponsavel]);
-        } catch (Exception $e) {
-            return $this->envioRespostaErro(500, 'Ocorreu um erro interno ao validar o responsável.');
+
+            $this->respondSuccess(['isResponsavel' => $usuarioEhResponsavel]);
+        } catch (Throwable $exception) {
+            $this->respondError('Ocorreu um erro interno ao validar o responsavel.', 500);
         }
     }
 
-    //Carrega workflow completo por ID
-    public function carregarWorkflowPorId($id)
+    public function carregarWorkflowPorId($id): void
     {
         try {
-            if (!is_numeric($id)) {
-                $this->envioRespostaErro(400, 'ID do workflow inválido');
-                return;
+            $workflowId = (int) $id;
+            if ($workflowId <= 0) {
+                $this->respondError('ID do workflow invalido', 400);
             }
-            $workflow = $this->model->carregarWorkflowPorId($id);
+
+            $workflow = $this->workflowModel->buscarPorId($workflowId);
             if (!$workflow) {
-                $this->envioRespostaErro(404, 'Workflow não encontrado');
-                return;
+                $this->respondError('Workflow nao encontrado', 404);
             }
-            $responsaveis = $this->model->carregarResponsaveisPorWorkflowId($id);
-            $anexos = $this->model->getAnexosByWorkflowId($id);
-            $workflowCompleto = [
+
+            $this->respondSuccess([
                 'id' => $workflow['id'],
                 'titulo' => $workflow['titulo'],
                 'descricao' => $workflow['descricao'],
                 'prioridade' => $workflow['prioridade'],
                 'categoria' => $workflow['categoria'],
                 'status' => $workflow['status'],
-                "prazo_final" => $workflow['prazo_final'],
+                'prazo_final' => $workflow['prazo_final'],
                 'criado_por' => $workflow['criado_por'],
                 'nome_criador' => $workflow['nome_criador'],
                 'email_criador' => $workflow['email_criador'],
                 'data_criacao' => $workflow['data_criacao'],
                 'data_conclusao' => $workflow['data_conclusao'],
-                'responsaveis' => $responsaveis,
-                'anexos' => $anexos
-            ];
-            $this->envioRespostaSucesso($workflowCompleto);
-        } catch (Exception $e) {
-            error_log("Erro em carregarWorkflowPorId: " . $e->getMessage());
-            $this->envioRespostaErro(500, 'Erro interno ao buscar workflow');
+                'responsaveis' => $this->responsavelModel->listarPorWorkflowId($workflowId),
+                'anexos' => $this->anexoModel->listarPorWorkflowId($workflowId)
+            ]);
+        } catch (Throwable $exception) {
+            error_log('Erro em carregarWorkflowPorId: ' . $exception->getMessage());
+            $this->respondError('Erro interno ao buscar workflow', 500);
         }
     }
 
-    //Obtém estatísticas gerais dos workflows
-    public function getEstatisticsWorkFlow()
+    public function getEstatisticsWorkFlow(): void
     {
         try {
-            $estatisticas = $this->model->getEstatisticsWorkFlow();
-            $this->envioRespostaSucesso($estatisticas);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(500, 'Erro ao buscar estatísticas: ' . $e->getMessage());
+            $this->respondSuccess($this->workflowModel->obterEstatisticas());
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao buscar estatisticas: ' . $exception->getMessage(), 500);
         }
     }
 
-    //Cria um novo workflow
-    public function createWorkflow()
+    public function createWorkflow(): void
     {
         try {
             if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-                throw new Exception('Método não permitido');
+                throw new Exception('Metodo nao permitido');
             }
+
             $requiredFields = ['titulo', 'prioridade'];
             foreach ($requiredFields as $field) {
                 if (empty($_POST[$field])) {
-                    throw new Exception("O campo $field é obrigatório");
+                    throw new Exception("O campo $field e obrigatorio");
                 }
             }
+
             $dadosWorkflow = [
                 'titulo' => trim($_POST['titulo']),
                 'descricao' => trim($_POST['descricao'] ?? ''),
                 'prioridade' => $this->normalizarPrioridade($_POST['prioridade']),
                 'categoria' => $_POST['categoria'] ?? null,
-                'responsaveis' => !empty($_POST['responsaveis']) ? explode(',', $_POST['responsaveis']) : [],
-                'criado_por' => $_SESSION['id'],
+                'responsaveis' => !empty($_POST['responsaveis']) ? array_map('intval', explode(',', $_POST['responsaveis'])) : [],
+                'criado_por' => $this->getSessionUserId(),
                 'prazo_final' => !empty($_POST['prazo_final']) ? $_POST['prazo_final'] : null
             ];
-            if (!in_array($_SESSION['id'], $dadosWorkflow['responsaveis'])) {
-                $dadosWorkflow['responsaveis'][] = $_SESSION['id'];
+
+            if (!in_array($dadosWorkflow['criado_por'], $dadosWorkflow['responsaveis'], true)) {
+                $dadosWorkflow['responsaveis'][] = $dadosWorkflow['criado_por'];
             }
-            $anexos = [];
-            if (!empty($_FILES['anexos'])) {
-                $anexos = $this->processarAnexos($_FILES['anexos']);
-            }
-            $workflowId = $this->model->criarWorkflow($dadosWorkflow, $anexos);
-            $this->model->inserirAcaoWorkflow(
+
+            $anexos = !empty($_FILES['anexos']) ? $this->processarAnexos($_FILES['anexos']) : [];
+
+            $this->pdo->beginTransaction();
+
+            $workflowId = $this->workflowModel->criar($dadosWorkflow);
+            $this->vincularResponsaveis($workflowId, $dadosWorkflow['responsaveis']);
+            $this->anexoModel->inserirLote($workflowId, $anexos);
+
+            $this->etapaModel->inserirAcao(
                 $workflowId,
-                $_SESSION['id'],
+                $dadosWorkflow['criado_por'],
                 'CRIACAO',
-                'Workflow criado pelo usuário',
+                'Workflow criado pelo usuario',
                 'Workflow criado'
             );
-            if (in_array($_SESSION['id'], $dadosWorkflow['responsaveis'])) {
-                $dt = new DateTime('now', new DateTimeZone('America/Sao_Paulo'));
-                $dt->modify('+1 second');
-                $dataFinal = $dt->format('Y-m-d H:i:s');
-                $this->model->inserirAcaoWorkflow(
-                    $workflowId,
-                    $_SESSION['id'],
-                    'APROVACAO',
-                    'Aprovação automática do criador',
-                    'Aprovado automaticamente ao criar o workflow',
-                    $dataFinal
-                );
-            }
-            $this->envioRespostaSucesso([
+
+            $this->registrarAprovacaoAutomaticaCriador($workflowId, $dadosWorkflow['responsaveis'], $dadosWorkflow['criado_por']);
+
+            $this->pdo->commit();
+
+            $this->respondSuccess([
                 'workflow_id' => $workflowId,
                 'message' => 'Workflow criado com sucesso'
             ]);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, $e->getMessage());
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            $this->respondError($exception->getMessage(), 400);
         }
     }
 
-    //Valida se workflow esta aprovado true ou false
-    public function verificaAprovado()
+    public function verificaAprovado(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'];
-            if (empty($workflowId)) {
-                throw new Exception('ID do workflow não fornecido');
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+
+            if ($workflowId <= 0) {
+                throw new Exception('ID do workflow nao fornecido');
             }
-            $aprovado = $this->model->verificaAprovado($workflowId);
-            if ($aprovado) {
-                $this->envioRespostaSucesso(['aprovado' => true]);
-            } else {
-                $this->envioRespostaSucesso(['aprovado' => false]);
-            }
-        } catch (Exception $e) {
-            throw new Exception('Erro ao verificar aprovação: ' . $e->getMessage());
+
+            $this->respondSuccess([
+                'aprovado' => $this->workflowModel->estaAprovado($workflowId)
+            ]);
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao verificar aprovacao: ' . $exception->getMessage(), 400);
         }
     }
 
-    //Atualiza um workflow existente
-    public function atualizarWorkflow()
+    public function atualizarWorkflow(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['id'];
-            $usuarioId = $_SESSION['id'];
-            if (empty($input['id']) || empty($input['titulo'])) {
-                throw new Exception('Dados incompletos para atualização');
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['id'] ?? 0);
+            $usuarioId = $this->getSessionUserId();
+
+            if ($workflowId <= 0 || empty($input['titulo'])) {
+                throw new Exception('Dados incompletos para atualizacao');
             }
+
             if (isset($input['prioridade'])) {
                 $input['prioridade'] = $this->normalizarPrioridade($input['prioridade']);
             }
-            $result = $this->model->atualizarWorkflow($input);
-            $this->model->inserirAcaoWorkflow(
+
+            $result = $this->workflowModel->atualizar($input);
+            $this->etapaModel->inserirAcao(
                 $workflowId,
                 $usuarioId,
                 'EDICAO',
                 'Workflow editado',
                 'Processo editado pelo criador do workflow'
             );
-            if ($result) {
-                $this->envioRespostaSucesso(['message' => 'Workflow atualizado com sucesso']);
-            } else {
+
+            if (!$result) {
                 throw new Exception('Erro ao atualizar workflow');
             }
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, $e->getMessage());
+
+            $this->respondSuccess(['message' => 'Workflow atualizado com sucesso']);
+        } catch (Throwable $exception) {
+            $this->respondError($exception->getMessage(), 400);
         }
     }
 
-    //Atualiza o status do workflow com base nas aprovações
-    public function atualizarStatusWorkflow($workflowId)
+    public function atualizarStatusWorkflow($workflowId = null): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'];
-            $statusAtual = $this->model->getStatusWorkflow($workflowId);
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? $workflowId ?? 0);
+            $statusAtual = $this->workflowModel->buscarStatus($workflowId);
+
             if ($statusAtual === 'REJEITADO') {
-                echo json_encode([
+                $this->respondJson([
                     'success' => true,
                     'status' => 'REJEITADO',
                     'workflowId' => $workflowId,
-                    'message' => 'Workflow já está rejeitado - status mantido'
+                    'message' => 'Workflow ja esta rejeitado - status mantido'
                 ]);
-                return;
             }
-            $aprovados = $this->model->verificarAprovacaoCompleta($workflowId);
-            if ($aprovados) {
-                $this->model->aprovarWorkflow($workflowId);
-                $status = "APROVADO";
+
+            $todosAprovaram = $this->etapaModel->verificarAprovacaoCompleta(
+                $workflowId,
+                $this->responsavelModel->totalResponsaveis($workflowId)
+            );
+
+            if ($todosAprovaram) {
+                $this->workflowModel->aprovar($workflowId);
+                $status = 'APROVADO';
             } else {
-                $this->model->setarEmAndamento($workflowId);
-                $status = "EM_ANDAMENTO";
+                $this->workflowModel->setarEmAndamento($workflowId);
+                $status = 'EM_ANDAMENTO';
             }
-            echo json_encode([
+
+            $this->respondJson([
                 'success' => true,
                 'status' => $status,
                 'workflowId' => $workflowId
             ]);
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, "" . $e->getMessage());
-            throw new Exception('Erro ao alterar status do workflow: ' . $e->getMessage());
+        } catch (Throwable $exception) {
+            $this->respondError($exception->getMessage(), 400);
         }
     }
 
-    public function reprovarWorkflow()
+    public function reprovarWorkflow(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'];
-            $justificativa = $input['justificativa'];
-            $usuarioId = $_SESSION['id'];
-            $this->model->desativarRevisoesWorkflow($workflowId);
-            $this->model->rejeitarWorkflow($workflowId, $justificativa);
-            $this->model->inserirAcaoWorkflow(
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+            $justificativa = trim((string) ($input['justificativa'] ?? ''));
+            $usuarioId = $this->getSessionUserId();
+
+            $this->etapaModel->desativarRevisoes($workflowId);
+            $this->workflowModel->rejeitar($workflowId);
+            $this->etapaModel->inserirAcao(
                 $workflowId,
                 $usuarioId,
                 'APROVACAO_FINAL',
                 'Workflow rejeitado pelo dono',
                 $justificativa
             );
-            echo json_encode([
+
+            $this->respondJson([
                 'status' => 'success',
                 'message' => 'Workflow rejeitado com sucesso'
             ]);
-        } catch (Exception $e) {
-            http_response_code(500);
-            echo json_encode([
+        } catch (Throwable $exception) {
+            $this->respondJson([
                 'status' => 'error',
-                'message' => 'Erro ao reprovar Workflow: ' . $e->getMessage()
-            ]);
+                'message' => 'Erro ao reprovar Workflow: ' . $exception->getMessage()
+            ], 500);
         }
     }
 
-    // Método público para a API
-    public function devolverRevisaoDono()
+    public function devolverRevisaoDono(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'] ?? null;
-            $etapaId = $input['etapaId'] ?? null;
-            $justificativa = $input['justificativa'] ?? null;
-            $usuarioId = $_SESSION['id'] ?? null;
-            $this->model->devolverRevisaoDono($workflowId, $etapaId, $justificativa, $usuarioId);
-            echo json_encode([
+            $input = $this->getJsonInput();
+            $this->etapaModel->devolverRevisaoDono(
+                (int) ($input['workflowId'] ?? 0),
+                (int) ($input['etapaId'] ?? 0),
+                (string) ($input['justificativa'] ?? ''),
+                $this->getSessionUserId()
+            );
+
+            $this->respondJson([
                 'status' => 'success',
-                'message' => 'Revisão devolvida com sucesso!'
+                'message' => 'Revisao devolvida com sucesso!'
             ]);
-        } catch (Exception $e) {
-            echo json_encode([
+        } catch (Throwable $exception) {
+            $this->respondJson([
                 'status' => 'error',
-                'message' => 'Erro ao devolver a revisão do dono: ' . $e->getMessage()
-            ]);
+                'message' => 'Erro ao devolver a revisao do dono: ' . $exception->getMessage()
+            ], 500);
         }
     }
 
-    public function devolverRevisaoUsuario()
+    public function devolverRevisaoUsuario(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'] ?? null;
-            $etapaId = $input['etapaId'] ?? null;
-            $justificativa = $input['justificativa'] ?? null;
-            $usuarioId = $_SESSION['id'] ?? null;
-            $this->model->devolverRevisaoUsuario($workflowId, $etapaId, $justificativa, $usuarioId);
-            echo json_encode([
+            $input = $this->getJsonInput();
+            $this->etapaModel->devolverRevisaoUsuario(
+                (int) ($input['workflowId'] ?? 0),
+                (int) ($input['etapaId'] ?? 0),
+                (string) ($input['justificativa'] ?? ''),
+                $this->getSessionUserId()
+            );
+
+            $this->respondJson([
                 'status' => 'success',
-                'message' => 'Revisão devolvida com sucesso!'
+                'message' => 'Revisao devolvida com sucesso!'
             ]);
-        } catch (Exception $e) {
-            echo json_encode([
+        } catch (Throwable $exception) {
+            $this->respondJson([
                 'status' => 'error',
-                'message' => 'Erro ao devolver a revisão do dono: ' . $e->getMessage()
-            ]);
+                'message' => 'Erro ao devolver a revisao do dono: ' . $exception->getMessage()
+            ], 500);
         }
     }
 
-    //Aprova o workflow verificando se todos aprovaram
-    public function aprovarWorkflow()
+    public function aprovarWorkflow(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'];
-            $justificativa = $input['justificativa'];
-            $usuarioId = $_SESSION['id'];
-            $idEtapa = $this->model->getIdEtapa($workflowId, $usuarioId);
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+            $justificativa = (string) ($input['justificativa'] ?? '');
+            $usuarioId = $this->getSessionUserId();
+
+            $idEtapa = $this->etapaModel->buscarUltimaEtapaPorTipo($workflowId, $usuarioId);
             if ($idEtapa) {
-                $this->model->atualizarRevisao($idEtapa);
+                $this->etapaModel->atualizarRevisao($idEtapa);
             }
-            $this->model->inserirAcaoWorkflow(
+
+            $this->etapaModel->inserirAcao(
                 $workflowId,
                 $usuarioId,
                 'APROVACAO',
-                'Workflow aprovado pelo usuário',
+                'Workflow aprovado pelo usuario',
                 $justificativa
             );
-            $todosAprovaram = $this->model->verificarAprovacaoCompleta($workflowId);
+
+            $todosAprovaram = $this->etapaModel->verificarAprovacaoCompleta(
+                $workflowId,
+                $this->responsavelModel->totalResponsaveis($workflowId)
+            );
+
             if ($todosAprovaram) {
-                $this->model->aprovarWorkflow($workflowId);
-                $dt = new DateTime('now', new DateTimeZone('America/Sao_Paulo'));
-                $dt->modify('+1 second');
-                $dataFinal = $dt->format('Y-m-d H:i:s');
-                $this->model->inserirAcaoWorkflow(
+                $this->workflowModel->aprovar($workflowId);
+                $this->etapaModel->inserirAcao(
                     $workflowId,
                     $usuarioId,
                     'APROVACAO_FINAL',
-                    'Workflow aprovado por todos os responsáveis',
-                    'Aprovação final concluída',
-                    $dataFinal
+                    'Workflow aprovado por todos os responsaveis',
+                    'Aprovacao final concluida',
+                    $this->getFutureTimestamp()
                 );
-                $this->envioRespostaSucesso(['message' => 'Workflow aprovado completamente por todos os responsáveis']);
-            } else {
-                $this->envioRespostaSucesso(['message' => 'Sua aprovação foi registrada. Aguardando outros responsáveis.']);
+
+                $this->respondSuccess(['message' => 'Workflow aprovado completamente por todos os responsaveis']);
             }
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, "Erro ao aprovar workflow: " . $e->getMessage());
+
+            $this->respondSuccess(['message' => 'Sua aprovacao foi registrada. Aguardando outros responsaveis.']);
+        } catch (Throwable $exception) {
+            $this->respondError('Erro ao aprovar workflow: ' . $exception->getMessage(), 400);
         }
     }
 
-    //Rejeita o workflow por parte do usuários
-    public function rejeitarUsuarioWorkflow()
+    public function rejeitarUsuarioWorkflow(): void
     {
         try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            if (empty($input['workflowId']) || empty($input['justificativa'])) {
-                throw new Exception('Dados incompletos para rejeição');
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+            $justificativa = trim((string) ($input['justificativa'] ?? ''));
+
+            if ($workflowId <= 0 || $justificativa === '') {
+                throw new Exception('Dados incompletos para rejeicao');
             }
-            $workflowId = (int)$input['workflowId'];
-            $justificativa = trim($input['justificativa']);
-            $resp_atual = $_SESSION['id'];
-            $result = $this->model->inserirAcaoWorkflow(
+
+            $result = $this->etapaModel->inserirAcao(
                 $workflowId,
-                $_SESSION['id'],
+                $this->getSessionUserId(),
                 'REPROVACAO',
-                'Workflow rejeitado pelo usuário',
+                'Workflow rejeitado pelo usuario',
                 $justificativa,
                 null,
                 1,
-                0,
+                0
             );
-            if ($result) {
-                $this->envioRespostaSucesso(['message' => 'Usuário rejeitou o workflow']);
-            } else {
+
+            if (!$result) {
                 throw new Exception('Erro ao rejeitar workflow');
             }
-        } catch (Exception $e) {
-            $this->envioRespostaErro(400, $e->getMessage());
+
+            $this->respondSuccess(['message' => 'Usuario rejeitou o workflow']);
+        } catch (Throwable $exception) {
+            $this->respondError($exception->getMessage(), 400);
         }
     }
 
-    //Processa anexos enviados no workflow
-    private function processarAnexos($arquivos)
+    public function getChatReprovacao(): void
+    {
+        try {
+            $etapaId = (int) ($_GET['etapaId'] ?? 0);
+            if ($etapaId <= 0) {
+                throw new Exception('ID da etapa nao fornecido');
+            }
+
+            $this->respondJson([
+                'status' => 'success',
+                'data' => $this->etapaModel->listarMensagensChat($etapaId)
+            ]);
+        } catch (Throwable $exception) {
+            $this->respondJson([
+                'status' => 'error',
+                'message' => 'Erro ao carregar chat: ' . $exception->getMessage()
+            ], 400);
+        }
+    }
+
+    public function adicionarResponsavel(): void
+    {
+        try {
+            $input = $this->getJsonInput();
+            $result = $this->responsavelModel->adicionar(
+                (int) ($input['workflowId'] ?? 0),
+                (int) ($input['userId'] ?? 0)
+            );
+
+            $this->respondJson([
+                'status' => 'success',
+                'message' => 'Responsavel adicionado com sucesso!',
+                'data' => $result
+            ]);
+        } catch (Throwable $exception) {
+            $this->respondJson([
+                'status' => 'error',
+                'message' => $exception->getMessage()
+            ], 400);
+        }
+    }
+
+    public function removerResponsavel(): void
+    {
+        try {
+            $input = $this->getJsonInput();
+            $workflowId = (int) ($input['workflowId'] ?? 0);
+            $userId = (int) ($input['userId'] ?? 0);
+            $novoResponsavelId = (int) ($input['novoResponsavelId'] ?? 0);
+            $usuarioId = $this->getSessionUserId();
+
+            if ($novoResponsavelId <= 0) {
+                throw new Exception('E necessario selecionar um novo responsavel para substituir o removido');
+            }
+
+            $result = $this->responsavelModel->remover($workflowId, $userId, $novoResponsavelId);
+            if (!$result) {
+                throw new Exception('Erro ao remover responsavel no banco de dados');
+            }
+
+            $todosAprovaram = $this->etapaModel->verificarAprovacaoCompleta(
+                $workflowId,
+                $this->responsavelModel->totalResponsaveis($workflowId)
+            );
+
+            if ($todosAprovaram) {
+                $this->workflowModel->aprovar($workflowId);
+                $this->etapaModel->inserirAcao(
+                    $workflowId,
+                    $usuarioId,
+                    'APROVACAO_FINAL',
+                    'Workflow aprovado por todos os responsaveis apos remocao',
+                    'Aprovacao final concluida automaticamente apos remocao de responsavel',
+                    $this->getFutureTimestamp()
+                );
+
+                $this->respondJson([
+                    'status' => 'success',
+                    'message' => 'Responsavel removido e workflow aprovado automaticamente!',
+                    'data' => $result,
+                    'workflow_aprovado' => true
+                ]);
+            }
+
+            $this->respondJson([
+                'status' => 'success',
+                'message' => 'Responsavel removido e substituido com sucesso!',
+                'data' => $result,
+                'workflow_aprovado' => false
+            ]);
+        } catch (Throwable $exception) {
+            $this->respondJson([
+                'status' => 'error',
+                'message' => $exception->getMessage()
+            ], 400);
+        }
+    }
+
+    private function vincularResponsaveis(int $workflowId, array $responsaveis): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO workflow_responsaveis (workflow_id, usuario_id, data_atribuicao)
+             VALUES (:workflow_id, :usuario_id, NOW())'
+        );
+
+        foreach ($responsaveis as $responsavelId) {
+            $stmt->execute([
+                ':workflow_id' => $workflowId,
+                ':usuario_id' => (int) $responsavelId
+            ]);
+        }
+    }
+
+    private function registrarAprovacaoAutomaticaCriador(int $workflowId, array $responsaveis, int $criadorId): void
+    {
+        if (!in_array($criadorId, $responsaveis, true)) {
+            return;
+        }
+
+        $this->etapaModel->inserirAcao(
+            $workflowId,
+            $criadorId,
+            'APROVACAO',
+            'Aprovacao automatica do criador',
+            'Aprovado automaticamente ao criar o workflow',
+            $this->getFutureTimestamp()
+        );
+    }
+
+    private function processarAnexos(array $arquivos): array
     {
         $anexosProcessados = [];
         $uploadDir = $_SERVER['DOCUMENT_ROOT'] . '/uploads/';
+
         if (!file_exists($uploadDir)) {
             mkdir($uploadDir, 0777, true);
         }
+
         foreach ($arquivos['name'] as $index => $name) {
             if ($arquivos['error'][$index] !== UPLOAD_ERR_OK) {
                 continue;
             }
+
             if ($arquivos['size'][$index] > (10 * 1024 * 1024)) {
                 continue;
             }
+
             $extensao = pathinfo($name, PATHINFO_EXTENSION);
             $nomeArquivo = uniqid() . '.' . $extensao;
             $caminhoCompleto = $uploadDir . $nomeArquivo;
+
             if (move_uploaded_file($arquivos['tmp_name'][$index], $caminhoCompleto)) {
                 $anexosProcessados[] = [
                     'nome_original' => $name,
@@ -540,138 +688,26 @@ class WorkFlowController
                 ];
             }
         }
+
         return $anexosProcessados;
     }
 
-    public function getChatReprovacao()
+    private function normalizarPrioridade($prioridade): string
     {
-        try {
-            $etapaId = $_GET['etapaId'] ?? null;
-            if (!$etapaId) {
-                throw new Exception('ID da etapa não fornecido');
-            }
-            $mensagens = $this->model->getMensagensChat($etapaId);
-            echo json_encode([
-                'status' => 'success',
-                'data' => $mensagens
-            ]);
-        } catch (Exception $e) {
-            echo json_encode([
-                'status' => 'error',
-                'message' => 'Erro ao carregar chat: ' . $e->getMessage()
-            ]);
-        }
-    }
+        $prioridade = strtoupper(trim((string) $prioridade));
 
-    //Envio de resposta padrão para sucesso
-    private function envioRespostaSucesso($data)
-    {
-        header('Content-Type: application/json');
-        $response = [
-            'status' => 'success',
-            'data' => $data
-        ];
-        echo json_encode($response);
-        exit;
-    }
-
-    //Envio de resposta padrão para erro
-    private function envioRespostaErro($code, $message)
-    {
-        http_response_code($code);
-        header('Content-Type: application/json');
-        $response = [
-            'status' => 'error',
-            'message' => $message
-        ];
-        echo json_encode($response);
-        exit;
-    }
-
-    private function normalizarPrioridade($prioridade)
-    {
-        $prioridade = strtoupper(trim((string)$prioridade));
-
-        if ($prioridade === 'MÉDIA' || $prioridade === 'MEDIA') {
+        if ($prioridade === 'MEDIA' || $prioridade === 'MÉDIA') {
             return 'MEDIA';
         }
 
         return $prioridade;
     }
 
-    public function adicionarResponsavel()
+    private function getFutureTimestamp(): string
     {
-        try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'];
-            $userId = $input['userId'];
-            $result = $this->model->adicionarResponsavel($workflowId, $userId);
-            if ($result) {
-                echo json_encode([
-                    'status' => 'success',
-                    'message' => 'Responsável adicionado com sucesso!',
-                    'data' => $result
-                ]);
-            } else {
-                throw new Exception('Erro ao adicionar responsável no banco de dados!');
-            }
-        } catch (Exception $e) {
-            echo json_encode([
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ]);
-        }
-    }
+        $dt = new DateTime('now', new DateTimeZone('America/Sao_Paulo'));
+        $dt->modify('+1 second');
 
-    public function removerResponsavel()
-    {
-        try {
-            $input = json_decode(file_get_contents('php://input'), true);
-            $workflowId = $input['workflowId'];
-            $userId = $input['userId'];
-            $novoResponsavelId = $input['novoResponsavelId'] ?? null;
-            $usuarioId = $_SESSION['id'];
-            if (!$novoResponsavelId) {
-                throw new Exception('É necessário selecionar um novo responsável para substituir o removido!');
-            }
-            $result = $this->model->removerResponsavel($workflowId, $userId, $novoResponsavelId);
-            if ($result) {
-                $todosAprovaram = $this->model->verificarAprovacaoCompleta($workflowId);
-                if ($todosAprovaram) {
-                    $this->model->aprovarWorkflow($workflowId);
-                    $dt = new DateTime('now', new DateTimeZone('America/Sao_Paulo'));
-                    $dt->modify('+1 second');
-                    $dataFinal = $dt->format('Y-m-d H:i:s');
-                    $this->model->inserirAcaoWorkflow(
-                        $workflowId,
-                        $usuarioId,
-                        'APROVACAO_FINAL',
-                        'Workflow aprovado por todos os responsáveis após remoção',
-                        'Aprovação final concluída automaticamente após remoção de responsável',
-                        $dataFinal
-                    );
-                    echo json_encode([
-                        'status' => 'success',
-                        'message' => 'Responsável removido e workflow aprovado automaticamente!',
-                        'data' => $result,
-                        'workflow_aprovado' => true
-                    ]);
-                } else {
-                    echo json_encode([
-                        'status' => 'success',
-                        'message' => 'Responsável removido e substituído com sucesso!',
-                        'data' => $result,
-                        'workflow_aprovado' => false
-                    ]);
-                }
-            } else {
-                throw new Exception('Erro ao remover responsável no banco de dados!');
-            }
-        } catch (Exception $e) {
-            echo json_encode([
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ]);
-        }
+        return $dt->format('Y-m-d H:i:s');
     }
 }

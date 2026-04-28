@@ -1,55 +1,52 @@
 <?php
-require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Connection.php';
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/user/UserModel.php';
 
 class LoginModel
 {
-    private $conn;
-    private $table = 'users';
+    private UserModel $userModel;
 
-    public function __construct()
+    public function __construct(?PDO $connection = null)
     {
-        $database = new Connection();
-        $this->conn = $database->getConnection();
+        $this->userModel = new UserModel($connection);
     }
 
-    public function autenticar($usuario, $senha)
+    public function autenticar(string $usuario, string $senha): array
     {
         try {
-            $query = "SELECT ID, NOME, EMAIL, USUARIO, SENHA 
-                      FROM " . $this->table . " 
-                      WHERE USUARIO = :usuario
-                      AND STATUS = 1
-                      LIMIT 1";
+            $usuarioData = $this->userModel->buscarAtivoPorUsuario($usuario);
 
-            $stmt = $this->conn->prepare($query);
-            $stmt->bindParam(':usuario', $usuario);
-            $stmt->execute();
+            if ($usuarioData && $this->verificarSenha($senha, $usuarioData['SENHA'])) {
+                unset($usuarioData['SENHA']);
 
-            if ($stmt->rowCount() > 0) {
-                $usuarioData = $stmt->fetch(PDO::FETCH_ASSOC);
-                if ($this->verificarSenha($senha, $usuarioData['SENHA'])) {
-                    unset($usuarioData['SENHA']);
-                    return [
-                        'sucesso' => true,
-                        'usuario' => [
-                            'id' => $usuarioData['ID'],
-                            'nome' => $usuarioData['NOME'],
-                            'email' => $usuarioData['EMAIL'],
-                            'usuario' => $usuarioData['USUARIO'],
-                        ]
-                    ];
-                }
+                return [
+                    'sucesso' => true,
+                    'usuario' => [
+                        'id' => $usuarioData['ID'],
+                        'nome' => $usuarioData['NOME'],
+                        'email' => $usuarioData['EMAIL'],
+                        'usuario' => $usuarioData['USUARIO']
+                    ]
+                ];
             }
+
             return [
                 'sucesso' => false,
-                'mensagem' => 'Usuário ou senha incorretos.'
+                'mensagem' => 'Usuario ou senha incorretos.'
             ];
-        } catch (PDOException $e) {
+        } catch (PDOException $exception) {
             return [
                 'sucesso' => false,
-                'mensagem' => 'Erro no servidor: ' . $e->getMessage()
+                'mensagem' => 'Erro no servidor: ' . $exception->getMessage()
             ];
         }
+    }
+
+    public function atualizarSessionIdNoBanco(int $userId, ?string $sessionId = null): int
+    {
+        $sessionId = $sessionId ?: session_id();
+
+        return $this->userModel->atualizarSessionId($userId, $sessionId);
     }
 
     private function verificarSenha(string $senhaInformada, string $senhaSalva): bool
@@ -65,26 +62,5 @@ class LoginModel
         }
 
         return hash_equals($senhaSalva, $senhaInformada);
-    }
-
-    public function atualizarSessionIdNoBanco($userId, $sessionId = null)
-    {
-        try {
-            $database = new Connection();
-            $conn = $database->getConnection();
-            $query = "UPDATE users SET SESSION_ID = :sessionId WHERE ID = :userId";
-            $stmt = $conn->prepare($query);
-            if ($sessionId === null) {
-                $sessionId = session_id();
-            }
-            $stmt->bindParam(':sessionId', $sessionId);
-            $stmt->bindParam(':userId', $userId, PDO::PARAM_INT);
-            $stmt->execute();
-            error_log("DEBUG: User $userId -> Session ID: $sessionId");
-            return $stmt->rowCount();
-        } catch (PDOException $e) {
-            error_log("Erro ao atualizar session_id: " . $e->getMessage());
-            throw $e;
-        }
     }
 }

@@ -1,69 +1,88 @@
 <?php
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/controllers/BaseController.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/app/models/login/LoginModel.php';
 
-class LoginController
+class LoginController extends BaseController
 {
-    private $model;
+    private LoginModel $model;
 
     public function __construct()
     {
         $this->model = new LoginModel();
     }
 
-    public function processarLogin()
+    public function processarLogin(): void
     {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            $this->responderJson([
+            $this->respondJson([
                 'sucesso' => false,
-                'mensagem' => 'Método não permitido.'
+                'mensagem' => 'Metodo nao permitido.'
             ], 405);
-            return;
         }
 
         $usuario = trim($_POST['usuario'] ?? '');
         $senha = $_POST['password'] ?? '';
 
-        if (empty($usuario) || empty($senha)) {
-            $this->responderJson([
+        if ($usuario === '' || $senha === '') {
+            $this->respondJson([
                 'sucesso' => false,
                 'mensagem' => 'Por favor, preencha todos os campos.'
             ]);
-            return;
         }
 
         if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $usuario)) {
-            $this->responderJson([
+            $this->respondJson([
                 'sucesso' => false,
-                'mensagem' => 'Usuário inválido. Use apenas letras, números e underscore (_).'
+                'mensagem' => 'Usuario invalido. Use apenas letras, numeros e underscore (_).'
             ]);
-            return;
         }
 
         $resultado = $this->model->autenticar($usuario, $senha);
 
-        if ($resultado['sucesso']) {
-            $this->iniciarSessaoUsuario($resultado['usuario']);
-            $this->responderJson([
-                'sucesso' => true,
-                'mensagem' => 'Login realizado com sucesso!',
-                'redirect' => '/app/views/workflow/geral/index.php'
-            ]);
-        } else {
-            $this->responderJson([
+        if (!$resultado['sucesso']) {
+            $this->respondJson([
                 'sucesso' => false,
                 'mensagem' => $resultado['mensagem']
             ]);
         }
+
+        $this->iniciarSessaoUsuario($resultado['usuario']);
+        $this->respondJson([
+            'sucesso' => true,
+            'mensagem' => 'Login realizado com sucesso!',
+            'redirect' => '/app/views/workflow/geral/index.php'
+        ]);
     }
 
-    private function iniciarSessaoUsuario($usuarioData)
+    public function logout(): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
+        $this->ensureSessionStarted();
+
+        $_SESSION = [];
+
+        if (ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(
+                session_name(),
+                '',
+                time() - 42000,
+                $params['path'],
+                $params['domain'],
+                $params['secure'],
+                $params['httponly']
+            );
         }
 
+        session_destroy();
+        header('Location: /app/views/login/index.php');
+        exit;
+    }
+
+    private function iniciarSessaoUsuario(array $usuarioData): void
+    {
+        $this->ensureSessionStarted();
         session_regenerate_id(true);
-        $currentSessionId = session_id();
 
         $_SESSION['usuario'] = [
             'id' => $usuarioData['id'],
@@ -75,40 +94,7 @@ class LoginController
         ];
         $_SESSION['id'] = $usuarioData['id'];
 
-        $this->model->atualizarSessionIdNoBanco($usuarioData['id'], $currentSessionId);
+        $this->model->atualizarSessionIdNoBanco((int) $usuarioData['id'], session_id());
         session_write_close();
-    }
-
-    public function logout()
-    {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-
-        $_SESSION = [];
-        if (ini_get("session.use_cookies")) {
-            $params = session_get_cookie_params();
-            setcookie(
-                session_name(),
-                '',
-                time() - 42000,
-                $params["path"],
-                $params["domain"],
-                $params["secure"],
-                $params["httponly"]
-            );
-        }
-
-        session_destroy();
-        header('Location: /app/views/login/index.php');
-        exit;
-    }
-
-    private function responderJson($dados, $codigo = 200)
-    {
-        http_response_code($codigo);
-        header('Content-Type: application/json');
-        echo json_encode($dados);
-        exit;
     }
 }

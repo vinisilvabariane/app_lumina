@@ -1,39 +1,40 @@
 <?php
-require_once($_SERVER["DOCUMENT_ROOT"] . "/app/configs/Authenticator.php");
-require_once($_SERVER["DOCUMENT_ROOT"] . "/app/controllers/workflow/WorkFlowController.php");
 
-$controller = new WorkFlowController;
-$action = isset($_GET['action']) ? $_GET['action'] : '';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/controllers/workflow/WorkFlowController.php';
+
+$controller = new WorkFlowController();
+$action = $_GET['action'] ?? '';
 
 switch ($action) {
     case 'obterUsuarioIdAtual':
+        header('Content-Type: application/json');
         echo json_encode([
             'success' => true,
-            'id' => (int)$_SESSION['id']
+            'id' => (int) ($_SESSION['id'] ?? 0)
         ]);
         break;
     case 'getEtapas':
         $workflowId = $_GET['workflowId'] ?? null;
         if ($workflowId) {
             $controller->getEtapas($workflowId);
-        } else {
-            echo json_encode(['error' => 'Workflow ID não fornecido']);
+            break;
         }
+
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Workflow ID nao fornecido']);
         break;
     case 'getWorkFlow':
-        $filter = isset($_GET['filter']) ? $_GET['filter'] : 'todos';
-        $controller->getWorkFlow($filter);
+        $controller->getWorkFlow($_GET['filter'] ?? 'todos');
         break;
     case 'carregarWorkflowPorId':
-        $id = $_GET['id'] ?? 0;
-        $controller->carregarWorkflowPorId($id);
+        $controller->carregarWorkflowPorId($_GET['id'] ?? 0);
         break;
     case 'getValidateOwner':
-        $id = $_GET['id'] ?? 0;
-        $controller->getValidateOwner($id);
+        $controller->getValidateOwner($_GET['id'] ?? 0);
         break;
     case 'atualizarStatusWorkflow':
-        $controller->atualizarStatusWorkflow($workflowId);
+        $controller->atualizarStatusWorkflow();
         break;
     case 'carregarUsuarios':
         $controller->carregarUsuarios();
@@ -71,21 +72,27 @@ switch ($action) {
     case 'verificaRevisaoWorkflow':
         $controller->verificaRevisaoWorkflow();
         break;
-    case 'devolverRevisaoDono';
+    case 'devolverRevisaoDono':
         $controller->devolverRevisaoDono();
         break;
-    case 'devolverRevisaoUsuario';
+    case 'devolverRevisaoUsuario':
         $controller->devolverRevisaoUsuario();
         break;
-    case 'getChatReprovacao';
+    case 'getChatReprovacao':
         $controller->getChatReprovacao();
         break;
-    case 'adicionarResponsavel';
+    case 'adicionarResponsavel':
         $controller->adicionarResponsavel();
         break;
-    case 'removerResponsavel';
+    case 'removerResponsavel':
         $controller->removerResponsavel();
         break;
     default:
+        header('Content-Type: application/json');
+        http_response_code(404);
+        echo json_encode([
+            'status' => 'error',
+            'message' => 'Endpoint nao encontrado'
+        ]);
         break;
 }
