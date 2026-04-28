@@ -1,4 +1,4 @@
-# Lumina
+# Flow
 
 Aplicacao PHP com estrutura MVC para login, listagem de workflows e detalhes do fluxo.
 
@@ -7,7 +7,7 @@ Aplicacao PHP com estrutura MVC para login, listagem de workflows e detalhes do 
 A raiz do projeto e esta:
 
 ```text
-C:\Repositories\lumina
+C:\Repositories\flow
 ```
 
 E aqui que estao:

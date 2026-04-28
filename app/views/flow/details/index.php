@@ -1,6 +1,6 @@
 <?php
 require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
-$workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$flowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -9,7 +9,7 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Lumina | Detalhes do Workflow</title>
+    <title>Lumina | Detalhes do Flow</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -26,16 +26,16 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
     <nav class="topbar">
         <div class="container-fluid topbar-inner">
-            <a class="brand-mark" href="/app/views/workflow/geral/index.php">
+            <a class="brand-mark" href="/app/views/flow/overview/index.php">
                 <img src="/app/src/img/lumina-logo.png" alt="Lumina">
                 <div>
                     <span>Lumina</span>
-                    <small>Detalhes do workflow</small>
+                    <small>Detalhes do flow</small>
                 </div>
             </a>
 
             <div class="topbar-actions">
-                <a class="topbar-link" href="/app/views/workflow/geral/index.php">Homepage</a>
+                <a class="topbar-link" href="/app/views/flow/overview/index.php">Homepage</a>
                 <button class="btn btn-light btn-back" onclick="window.history.back()">
                     <i class="fas fa-arrow-left"></i>
                     Voltar
@@ -52,13 +52,13 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
         <main class="page-wrapper">
             <section class="detail-hero">
                 <div>
-                    <span class="eyebrow">Workflow</span>
+                    <span class="eyebrow">Flow</span>
                     <h1>Detalhes e acompanhamento do fluxo</h1>
                     <p>Uma visao consolidada para acompanhar status, participantes, historico de acoes, anexos e operacoes disponiveis.</p>
                 </div>
                 <div class="detail-hero__meta">
                     <span class="detail-hero__meta-label">Registro</span>
-                    <strong id="workflowIdDisplay">Workflow #<?php echo $workflowId; ?></strong>
+                    <strong id="workflowIdDisplay">Flow #<?php echo $flowId; ?></strong>
                 </div>
             </section>
 
@@ -129,7 +129,7 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
                     <div class="action-card">
                         <span class="section-kicker">Acoes</span>
                         <h3>Operacoes do workflow</h3>
-                        <p>Comandos contextuais liberados conforme status e permissoes.</p>
+                        <p>Comandos contextuais liberados conforme status e permissoes do flow.</p>
                         <div class="action-stack">
                             <button id="btnGerarPDF" class="btn btn-primary">
                                 <i class="fas fa-file-pdf"></i>Gerar PDF
@@ -237,17 +237,17 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
             </div>
         </div>
 
-        <div class="modal fade" id="editarWorkflowModal" tabindex="-1" aria-labelledby="editarWorkflowModalLabel" aria-hidden="true">
+        <div class="modal fade" id="editFlowModal" tabindex="-1" aria-labelledby="editFlowModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
                         <div>
                             <span class="eyebrow">Edicao</span>
-                            <h5 class="modal-title" id="editarWorkflowModalLabel">Editar workflow</h5>
+                            <h5 class="modal-title" id="editFlowModalLabel">Editar flow</h5>
                         </div>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <form id="formEditarWorkflow">
+                    <form id="editFlowForm">
                         <div class="modal-body">
                             <div class="row g-3">
                                 <div class="col-12">
@@ -337,7 +337,7 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="revisaoUsuarioModalLabel">
-                            <i class="fas fa-info-circle me-2"></i>Revisar minha acao
+                                <i class="fas fa-info-circle me-2"></i>Revisar minha acao
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
@@ -401,10 +401,10 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
         <script src="/app/src/js/shared/http.js"></script>
         <script src="/app/src/js/shared/ui.js"></script>
         <script>
-            const WORKFLOW_ID = <?php echo $workflowId; ?>;
+            const FLOW_ID = <?php echo $flowId; ?>;
         </script>
-        <script src="/app/src/js/workflow/detalhes.js"></script>
-        <script src="/app/src/js/workflow/geradorPDF.js"></script>
+        <script src="/app/src/js/flow/details.js"></script>
+        <script src="/app/src/js/flow/pdfGenerator.js"></script>
     </div>
 </body>
 

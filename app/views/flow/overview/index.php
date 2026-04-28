@@ -27,19 +27,19 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
 
     <nav class="topbar">
         <div class="container-fluid topbar-inner">
-            <a class="brand-mark" href="/app/views/workflow/geral/index.php">
+            <a class="brand-mark" href="/app/views/flow/overview/index.php">
                 <img src="/app/src/img/lumina-logo.png" alt="Lumina">
                 <div>
                     <span>Lumina</span>
-                    <small>Homepage de workflows</small>
+                    <small>Homepage de flows</small>
                 </div>
             </a>
 
             <div class="topbar-actions">
-                <a class="topbar-link active" href="/app/views/workflow/geral/index.php">Home</a>
-                <button class="btn btn-primary btn-create btn-create--top" data-bs-toggle="modal" data-bs-target="#newWorkflowModal">
+                <a class="topbar-link active" href="/app/views/flow/overview/index.php">Home</a>
+                <button class="btn btn-primary btn-create btn-create--top" data-bs-toggle="modal" data-bs-target="#newFlowModal">
                     <i class="fas fa-plus"></i>
-                    Novo workflow
+                    Novo flow
                 </button>
                 <a class="btn btn-logout" href="/app/routers/login/LoginRouter.php?action=logout">
                     <i class="fas fa-sign-out-alt"></i>
@@ -55,13 +55,13 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                 <article class="hero-panel">
                     <div class="hero-copy">
                         <span class="eyebrow">Homepage</span>
-                        <h1>Uma central mais moderna para visualizar, filtrar e criar workflows.</h1>
+                        <h1>Uma central mais moderna para visualizar, filtrar e criar flows.</h1>
                         <p>Interface redesenhada com foco em clareza, contraste e tomada de decisao. Menos ruido visual, mais leitura e controle do fluxo.</p>
 
                         <div class="hero-actions">
-                            <button class="btn btn-primary btn-create" data-bs-toggle="modal" data-bs-target="#newWorkflowModal">
+                            <button class="btn btn-primary btn-create" data-bs-toggle="modal" data-bs-target="#newFlowModal">
                                 <i class="fas fa-plus"></i>
-                                Criar workflow
+                                Criar flow
                             </button>
                             <a class="btn btn-secondary-shell" href="#workflowsTable">
                                 <i class="fas fa-arrow-down"></i>
@@ -130,7 +130,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                     <span class="stats-icon"><i class="fas fa-layer-group"></i></span>
                     <span class="stats-label">Total</span>
                     <strong class="stats-value" id="ativosCount">0</strong>
-                    <span class="stats-meta">Workflows registrados</span>
+                    <span class="stats-meta">Flows registrados</span>
                 </article>
                 <article class="stats-card">
                     <span class="stats-icon"><i class="fas fa-spinner"></i></span>
@@ -156,10 +156,10 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                 <div class="panel-head">
                     <div>
                         <span class="section-kicker">Fila principal</span>
-                        <h2>Workflows em andamento</h2>
+                        <h2>Flows em andamento</h2>
                         <p>Filtre rapidamente os itens relevantes para seu contexto atual.</p>
                     </div>
-                    <div class="filter-group" role="group" aria-label="Filtro de Workflows">
+                    <div class="filter-group" role="group" aria-label="Filtro de Flows">
                         <button type="button" class="btn btn-filter active" id="btnTodos">Todos</button>
                         <button type="button" class="btn btn-filter" id="btnMeus">Meus</button>
                         <button type="button" class="btn btn-filter" id="btnParticipando">Participando</button>
@@ -169,7 +169,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                 <div class="table-card">
                     <div class="table-card__header">
                         <div>
-                            <h3>Lista de workflows</h3>
+                            <h3>Lista de flows</h3>
                             <p>Leitura otimizada para consulta, triagem e acesso aos detalhes.</p>
                         </div>
                     </div>
@@ -194,24 +194,24 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
             </section>
         </main>
 
-        <div class="modal fade" id="newWorkflowModal" tabindex="-1" aria-labelledby="newWorkflowModalLabel" aria-hidden="true">
+        <div class="modal fade" id="newFlowModal" tabindex="-1" aria-labelledby="newFlowModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-lg modal-dialog-centered">
                 <div class="modal-content">
                     <div class="modal-header">
                         <div>
                             <span class="eyebrow">Cadastro</span>
-                            <h5 class="modal-title" id="newWorkflowModalLabel">Novo workflow</h5>
+                            <h5 class="modal-title" id="newFlowModalLabel">Novo flow</h5>
                             <p>Preencha os dados abaixo para iniciar um novo fluxo.</p>
                         </div>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <form id="newWorkflowForm" class="needs-validation" novalidate enctype="multipart/form-data">
+                    <form id="newFlowForm" class="needs-validation" novalidate enctype="multipart/form-data">
                         <div class="modal-body">
                             <div class="row g-3">
                                 <div class="col-12">
                                     <label for="workflowTitulo" class="form-label">Titulo</label>
                                     <input type="text" class="form-control" id="workflowTitulo" placeholder="Ex.: Revisao de procedimento interno" required maxlength="100" />
-                                    <div class="invalid-feedback">Informe o titulo do workflow.</div>
+                                    <div class="invalid-feedback">Informe o titulo do flow.</div>
                                 </div>
                                 <div class="col-12">
                                     <label for="workflowDescricao" class="form-label">Descricao</label>
@@ -239,7 +239,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                                 <div class="col-md-6">
                                     <label for="workflowPrazoFinal" class="form-label">Prazo final</label>
                                     <input type="date" class="form-control" id="workflowPrazoFinal" />
-                                    <div class="form-text">Data limite para conclusao.</div>
+                                    <div class="form-text">Data limite para conclusao do flow.</div>
                                 </div>
                                 <div class="col-12">
                                     <label for="workflowResponsaveis" class="form-label">Usuarios responsaveis</label>
@@ -263,7 +263,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
-                            <button type="submit" class="btn btn-primary">Salvar workflow</button>
+                            <button type="submit" class="btn btn-primary">Salvar flow</button>
                         </div>
                     </form>
                 </div>
@@ -281,7 +281,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
         <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
         <script src="/app/src/js/shared/http.js"></script>
         <script src="/app/src/js/shared/ui.js"></script>
-        <script src="/app/src/js/workflow/main.js"></script>
+        <script src="/app/src/js/flow/overview.js"></script>
     </div>
 </body>
 

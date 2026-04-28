@@ -93,10 +93,10 @@
         }
 
         state.requestInFlight = true;
+        const payload = new URLSearchParams(new FormData(elements.form));
         setLoading(true);
 
         try {
-            const payload = new URLSearchParams(new FormData(elements.form));
             const response = await fetch('/app/routers/login/LoginRouter.php?action=login', {
                 method: 'POST',
                 credentials: 'same-origin',
@@ -108,13 +108,13 @@
 
             const result = await response.json();
 
-            if (!response.ok || !result.sucesso) {
-                throw new Error(result.mensagem || 'Falha ao autenticar');
+            if (!response.ok || !result.success) {
+                throw new Error(result.message || 'Falha ao autenticar');
             }
 
-            LuminaUI.toast('success', 'Login realizado', result.mensagem || 'Acesso liberado.');
+            LuminaUI.toast('success', 'Login realizado', result.message || 'Acesso liberado.');
             elements.submitButton.innerHTML = '<i class="bi bi-check-circle me-2"></i>Abrindo...';
-            window.location.href = result.redirect || '/app/views/workflow/geral/index.php';
+            window.location.href = result.redirect || '/app/views/flow/overview/index.php';
         } catch (error) {
             handleLoginError(error);
         } finally {
@@ -161,10 +161,10 @@
         try {
             const result = await LuminaHttp.get('/app/routers/login/LoginRouter.php?action=check');
 
-            if (result.sucesso) {
+            if (result.success) {
                 LuminaUI.toast('info', 'Sessao ativa', 'Voce ja esta logado. Redirecionando...', 2200);
                 window.setTimeout(() => {
-                    window.location.href = '/app/views/workflow/geral/index.php';
+                    window.location.href = '/app/views/flow/overview/index.php';
                 }, 700);
             }
         } catch (error) {

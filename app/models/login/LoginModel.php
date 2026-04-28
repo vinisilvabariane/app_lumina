@@ -11,56 +11,52 @@ class LoginModel
         $this->userModel = new UserModel($connection);
     }
 
-    public function autenticar(string $usuario, string $senha): array
+    public function authenticate(string $username, string $password): array
     {
         try {
-            $usuarioData = $this->userModel->buscarAtivoPorUsuario($usuario);
+            $user = $this->userModel->findActiveByUsername($username);
 
-            if ($usuarioData && $this->verificarSenha($senha, $usuarioData['SENHA'])) {
-                unset($usuarioData['SENHA']);
-
+            if ($user && $this->verifyPassword($password, $user['password_hash'])) {
                 return [
-                    'sucesso' => true,
-                    'usuario' => [
-                        'id' => $usuarioData['ID'],
-                        'nome' => $usuarioData['NOME'],
-                        'email' => $usuarioData['EMAIL'],
-                        'usuario' => $usuarioData['USUARIO']
+                    'success' => true,
+                    'user' => [
+                        'id' => $user['ID'],
+                        'name' => $user['name'],
+                        'email' => $user['email'],
+                        'username' => $user['username']
                     ]
                 ];
             }
 
             return [
-                'sucesso' => false,
-                'mensagem' => 'Usuario ou senha incorretos.'
+                'success' => false,
+                'message' => 'Usuario ou senha incorretos.'
             ];
         } catch (PDOException $exception) {
             return [
-                'sucesso' => false,
-                'mensagem' => 'Erro no servidor: ' . $exception->getMessage()
+                'success' => false,
+                'message' => 'Erro no servidor: ' . $exception->getMessage()
             ];
         }
     }
 
-    public function atualizarSessionIdNoBanco(int $userId, ?string $sessionId = null): int
+    public function updateSessionIdInDatabase(int $userId, ?string $sessionId = null): int
     {
-        $sessionId = $sessionId ?: session_id();
-
-        return $this->userModel->atualizarSessionId($userId, $sessionId);
+        return $this->userModel->updateSessionId($userId, $sessionId ?: session_id());
     }
 
-    private function verificarSenha(string $senhaInformada, string $senhaSalva): bool
+    private function verifyPassword(string $inputPassword, string $storedPassword): bool
     {
-        $hashMd5 = md5($senhaInformada);
+        $md5Hash = md5($inputPassword);
 
-        if (hash_equals($senhaSalva, $hashMd5)) {
+        if (hash_equals($storedPassword, $md5Hash)) {
             return true;
         }
 
-        if (password_get_info($senhaSalva)['algo'] !== null) {
-            return password_verify($senhaInformada, $senhaSalva);
+        if (password_get_info($storedPassword)['algo'] !== null) {
+            return password_verify($inputPassword, $storedPassword);
         }
 
-        return hash_equals($senhaSalva, $senhaInformada);
+        return hash_equals($storedPassword, $inputPassword);
     }
 }

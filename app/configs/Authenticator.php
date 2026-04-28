@@ -1,4 +1,4 @@
 <?php
-require_once($_SERVER["DOCUMENT_ROOT"] . "/app/configs/SessionValidator.php");
+require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/SessionValidator.php';
 $sessionValidator = new SessionValidator();
-$sessionValidator->sessionValidate();
+$sessionValidator->validateSession();

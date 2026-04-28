@@ -23,11 +23,11 @@ function gerarRelatorioPDF() {
 
 async function coletarDadosCompletos(doc) {
     try {
-        const pageState = window.LuminaWorkflowPage?.getState?.() || {};
-        const workflow = pageState.workflow || {};
+        const pageState = window.LuminaFlowPage?.getState?.() || {};
+        const flow = pageState.flow || {};
         const timeline = Array.isArray(pageState.timeline) ? pageState.timeline : [];
 
-        const workflowData = {
+        const flowData = {
             titulo: document.getElementById('workflowTitulo')?.textContent || 'Nao informado',
             descricao: document.getElementById('workflowDescricao')?.textContent || 'Nao informado',
             prioridade: document.getElementById('workflowPrioridade')?.textContent?.replace(/\s+/g, ' ').trim() || 'Nao informado',
@@ -36,26 +36,26 @@ async function coletarDadosCompletos(doc) {
             criador: document.getElementById('workflowCriador')?.textContent || 'Nao informado',
             dataCriacao: document.getElementById('workflowDataCriacao')?.textContent || 'Nao informado',
             prazoFinal: document.getElementById('prazoFinal')?.textContent || 'Nao informado',
-            id: WORKFLOW_ID || 'N/A'
+            id: FLOW_ID || window.WORKFLOW_ID || 'N/A'
         };
 
-        const responsaveis = (workflow.responsaveis || []).map((responsavel) => ({
-            nome: responsavel.nome_usuario || 'Usuario',
-            login: responsavel.usuario_login ? `@${responsavel.usuario_login}` : 'Nao informado'
+        const responsaveis = (flow.assignees || []).map((assignee) => ({
+            nome: assignee.name || 'Usuario',
+            login: assignee.username ? `@${assignee.username}` : 'Nao informado'
         }));
 
-        const anexos = (workflow.anexos || []).map((anexo) => ({
-            nome: anexo.nome_arquivo || 'Arquivo',
-            tamanho: formatarTamanhoArquivo(anexo.tamanho),
-            data: formatarDataHoraPDF(anexo.data_upload)
+        const anexos = (flow.attachments || []).map((attachment) => ({
+            nome: attachment.file_name || 'Arquivo',
+            tamanho: formatarTamanhoArquivo(attachment.size_bytes),
+            data: formatarDataHoraPDF(attachment.uploaded_at)
         }));
 
         const historicoCompleto = await coletarHistoricoComChats(timeline);
-        await gerarPDFComEspacamentoAjustado(doc, workflowData, responsaveis, anexos, historicoCompleto);
+        await gerarPDFComEspacamentoAjustado(doc, flowData, responsaveis, anexos, historicoCompleto);
 
         Swal.close();
 
-        const fileName = `Relatorio_Workflow_${workflowData.titulo.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+        const fileName = `Relatorio_Flow_${flowData.titulo.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
         doc.save(fileName);
     } catch (error) {
         console.error('Erro ao gerar PDF:', error);
@@ -74,18 +74,18 @@ async function coletarHistoricoComChats(etapas) {
     for (const etapa of etapas) {
         let chatMessages = [];
 
-        if (etapa.tipo_acao === 'REPROVACAO' && etapa.id) {
+        if (etapa.action_type === 'REPROVACAO' && etapa.id) {
             chatMessages = await carregarMensagensChat(etapa.id);
         }
 
         historico.push({
-            titulo: etapa.tipo_acao || 'Etapa',
-            data: formatarDataHoraPDF(etapa.data_hora || new Date().toISOString()),
-            descricao: etapa.descricao || '',
-            usuario: etapa.usuario_nome || 'Nao identificado',
-            justificativa: etapa.justificativa || '',
+            titulo: etapa.action_type || 'Etapa',
+            data: formatarDataHoraPDF(etapa.created_at || new Date().toISOString()),
+            descricao: etapa.description || '',
+            usuario: etapa.user_name || 'Nao identificado',
+            justificativa: etapa.justification || '',
             chatMessages,
-            tipo: etapa.tipo_acao === 'REPROVACAO' ? 'REPROVACAO' : 'OUTRO'
+            tipo: etapa.action_type === 'REPROVACAO' ? 'REPROVACAO' : 'OUTRO'
         });
     }
 
@@ -94,7 +94,7 @@ async function coletarHistoricoComChats(etapas) {
 
 async function carregarMensagensChat(etapaId) {
     try {
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=getChatReprovacao&etapaId=${etapaId}`;
+        const endpoint = `/app/routers/flow/FlowRouter.php?action=getRejectionChat&stepId=${etapaId}`;
         const response = await fetch(endpoint, {
             method: 'GET',
             headers: { 'X-Requested-With': 'XMLHttpRequest' },
@@ -355,9 +355,9 @@ async function gerarPDFComEspacamentoAjustado(doc, workflowData, responsaveis, a
         doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
         doc.setFontSize(styles.tiny.size);
         doc.setTextColor(100, 100, 100);
-        doc.text(`Workflow ID: ${workflowData.id}`, margin, footerY);
+        doc.text(`Flow ID: ${workflowData.id}`, margin, footerY);
         doc.text(`Pagina ${page} de ${totalPages}`, pageWidth / 2, footerY, { align: 'center' });
-        doc.text('Sistema de Gestao de Workflows', pageWidth - margin, footerY, { align: 'right' });
+        doc.text('Sistema de Gestao de Flows', pageWidth - margin, footerY, { align: 'right' });
         doc.setTextColor(0, 0, 0);
     }
 }

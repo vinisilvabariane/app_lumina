@@ -18,27 +18,27 @@ class SessionValidator
         }
     }
 
-    public function sessionValidate(): void
+    public function validateSession(): void
     {
         $this->startSession();
 
         if (
             empty($_SESSION['id']) ||
-            empty($_SESSION['usuario']) ||
-            empty($_SESSION['usuario']['logado'])
+            empty($_SESSION['user']) ||
+            empty($_SESSION['user']['logged_in'])
         ) {
             $this->logout();
         }
 
-        $this->sessionIdValidate();
+        $this->validateSessionId();
     }
 
-    public function sessionIdValidate(): void
+    public function validateSessionId(): void
     {
         $this->startSession();
 
         try {
-            $sessionId = $this->userModel->buscarSessionIdAtivo((int) $_SESSION['id']);
+            $sessionId = $this->userModel->findActiveSessionId((int) $_SESSION['id']);
         } catch (PDOException $exception) {
             return;
         }
@@ -48,7 +48,7 @@ class SessionValidator
         }
 
         if ($sessionId === '') {
-            $this->userModel->atualizarSessionId((int) $_SESSION['id'], session_id());
+            $this->userModel->updateSessionId((int) $_SESSION['id'], session_id());
         }
     }
 

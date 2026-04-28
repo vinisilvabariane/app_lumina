@@ -12,46 +12,43 @@ class LoginController extends BaseController
         $this->model = new LoginModel();
     }
 
-    public function processarLogin(): void
+    public function processLogin(): void
     {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             $this->respondJson([
-                'sucesso' => false,
-                'mensagem' => 'Metodo nao permitido.'
+                'success' => false,
+                'message' => 'Metodo nao permitido.'
             ], 405);
         }
 
-        $usuario = trim($_POST['usuario'] ?? '');
-        $senha = $_POST['password'] ?? '';
+        $username = trim($_POST['usuario'] ?? '');
+        $password = $_POST['password'] ?? '';
 
-        if ($usuario === '' || $senha === '') {
+        if ($username === '' || $password === '') {
             $this->respondJson([
-                'sucesso' => false,
-                'mensagem' => 'Por favor, preencha todos os campos.'
+                'success' => false,
+                'message' => 'Por favor, preencha todos os campos.'
             ]);
         }
 
-        if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $usuario)) {
+        if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $username)) {
             $this->respondJson([
-                'sucesso' => false,
-                'mensagem' => 'Usuario invalido. Use apenas letras, numeros e underscore (_).'
+                'success' => false,
+                'message' => 'Usuario invalido. Use apenas letras, numeros e underscore (_).'
             ]);
         }
 
-        $resultado = $this->model->autenticar($usuario, $senha);
-
-        if (!$resultado['sucesso']) {
-            $this->respondJson([
-                'sucesso' => false,
-                'mensagem' => $resultado['mensagem']
-            ]);
+        $result = $this->model->authenticate($username, $password);
+        if (!$result['success']) {
+            $this->respondJson($result);
         }
 
-        $this->iniciarSessaoUsuario($resultado['usuario']);
+        $this->startUserSession($result['user']);
+
         $this->respondJson([
-            'sucesso' => true,
-            'mensagem' => 'Login realizado com sucesso!',
-            'redirect' => '/app/views/workflow/geral/index.php'
+            'success' => true,
+            'message' => 'Login realizado com sucesso!',
+            'redirect' => '/app/views/flow/overview/index.php'
         ]);
     }
 
@@ -79,22 +76,22 @@ class LoginController extends BaseController
         exit;
     }
 
-    private function iniciarSessaoUsuario(array $usuarioData): void
+    private function startUserSession(array $user): void
     {
         $this->ensureSessionStarted();
         session_regenerate_id(true);
 
-        $_SESSION['usuario'] = [
-            'id' => $usuarioData['id'],
-            'nome' => $usuarioData['nome'],
-            'email' => $usuarioData['email'],
-            'usuario' => $usuarioData['usuario'],
-            'logado' => true,
-            'data_login' => date('Y-m-d H:i:s')
+        $_SESSION['user'] = [
+            'id' => $user['id'],
+            'name' => $user['name'],
+            'email' => $user['email'],
+            'username' => $user['username'],
+            'logged_in' => true,
+            'login_at' => date('Y-m-d H:i:s')
         ];
-        $_SESSION['id'] = $usuarioData['id'];
+        $_SESSION['id'] = $user['id'];
 
-        $this->model->atualizarSessionIdNoBanco((int) $usuarioData['id'], session_id());
+        $this->model->updateSessionIdInDatabase((int) $user['id'], session_id());
         session_write_close();
     }
 }
