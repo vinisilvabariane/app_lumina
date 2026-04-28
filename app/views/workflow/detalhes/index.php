@@ -107,6 +107,21 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
                                 </dl>
                             </aside>
                         </div>
+
+                        <div class="insight-strip">
+                            <div class="insight-chip">
+                                <span>Leitura</span>
+                                <strong>Resumo centralizado</strong>
+                            </div>
+                            <div class="insight-chip">
+                                <span>Colaboracao</span>
+                                <strong>Timeline e revisoes em contexto</strong>
+                            </div>
+                            <div class="insight-chip">
+                                <span>Documentacao</span>
+                                <strong>PDF e anexos acessiveis</strong>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -383,6 +398,8 @@ $workflowId = isset($_GET['id']) ? intval($_GET['id']) : 0;
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <script src="/app/src/js/shared/http.js"></script>
+        <script src="/app/src/js/shared/ui.js"></script>
         <script>
             const WORKFLOW_ID = <?php echo $workflowId; ?>;
         </script>

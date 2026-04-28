@@ -1,1632 +1,846 @@
-document.addEventListener("DOMContentLoaded", function () {
-    // Obtém o ID do workflow a partir de uma variável global ou outro método
-    const workflowId = typeof WORKFLOW_ID !== 'undefined' ? WORKFLOW_ID : 0;
+(() => {
+    const workflowId = Number(window.WORKFLOW_ID || 0);
 
-    /*
-    * Verifica e atualiza o status do workflow periodicamente
-    */
-    async function atualizarStatusWorkflow() {
-        if (!workflowId) {
-            console.error("ID do workflow inválido para verificação de status.");
-            return;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=atualizarStatusWorkflow`;
-        try {
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ workflowId })
-            });
-            if (!response.ok) {
-                throw new Error(`Erro na requisição de status: ${response.statusText}`);
-            }
-            const data = await response.json();
-        } catch (error) {
-            console.error("Erro ao verificar status do workflow:", error);
-        }
+    if (!workflowId) {
+        return;
     }
 
-    /*
-    * Verifica se o usuário logado é o proprietário do workflow.
-    */
-    async function getPermissionOwnerWorkflow() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para verificação de permissão.");
-            return;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=getValidateOwner&id=${workflowId}`;
-        try {
-            const response = await fetch(endpoint);
-            if (!response.ok) {
-                throw new Error(`Erro na requisição de permissão: ${response.statusText}`);
+    const ROUTES = {
+        updateStatus: '/app/routers/workflow/WorkFlowRouter.php?action=atualizarStatusWorkflow',
+        workflow: `/app/routers/workflow/WorkFlowRouter.php?action=carregarWorkflowPorId&id=${workflowId}`,
+        owner: `/app/routers/workflow/WorkFlowRouter.php?action=getValidateOwner&id=${workflowId}`,
+        steps: `/app/routers/workflow/WorkFlowRouter.php?action=getEtapas&workflowId=${workflowId}`,
+        userId: '/app/routers/workflow/WorkFlowRouter.php?action=obterUsuarioIdAtual',
+        approved: '/app/routers/workflow/WorkFlowRouter.php?action=verificaAprovado',
+        responsible: '/app/routers/workflow/WorkFlowRouter.php?action=validarResponsavel',
+        userRejected: '/app/routers/workflow/WorkFlowRouter.php?action=verificaReprovacaoUsuario',
+        userApproved: '/app/routers/workflow/WorkFlowRouter.php?action=verificaAprovacaoUsuario',
+        reviewStatus: '/app/routers/workflow/WorkFlowRouter.php?action=verificaRevisaoWorkflow',
+        users: '/app/routers/workflow/WorkFlowRouter.php?action=carregarUsuarios',
+        approve: '/app/routers/workflow/WorkFlowRouter.php?action=aprovarPorUsuarioWorkflow',
+        rejectByUser: '/app/routers/workflow/WorkFlowRouter.php?action=rejeitarPorUsuarioWorkflow',
+        rejectByOwner: '/app/routers/workflow/WorkFlowRouter.php?action=rejeitarWorkflow',
+        edit: '/app/routers/workflow/WorkFlowRouter.php?action=atualizarWorkflow',
+        returnOwnerReview: '/app/routers/workflow/WorkFlowRouter.php?action=devolverRevisaoDono',
+        returnUserReview: '/app/routers/workflow/WorkFlowRouter.php?action=devolverRevisaoUsuario',
+        chat: '/app/routers/workflow/WorkFlowRouter.php?action=getChatReprovacao',
+        addResponsible: '/app/routers/workflow/WorkFlowRouter.php?action=adicionarResponsavel',
+        removeResponsible: '/app/routers/workflow/WorkFlowRouter.php?action=removerResponsavel'
+    };
+
+    const dom = {};
+    const state = {
+        workflow: null,
+        timeline: [],
+        users: [],
+        permissions: {
+            currentUserId: null,
+            isOwner: false,
+            isResponsible: false,
+            isApproved: false,
+            userRejected: false,
+            userApproved: false,
+            reviewStatus: {
+                etapasEmRevisao: [],
+                totalEtapasRevisao: 0
             }
-            const data = await response.json();
-            if (data.status === 'success' && data.data) {
-                const btnAprovar = document.getElementById('btnAprovar');
-                const btnRejeitar = document.getElementById('btnRejeitar');
-                const btnEditar = document.getElementById('btnEditar');
-                if (data.data.isOwner === true) {
-                    btnEditar.style.display = 'inline-block';
-                    btnAprovar.style.display = 'none';
-                    btnRejeitar.style.display = 'none';
-                } else {
-                    btnEditar.style.display = 'none';
-                    btnAprovar.style.display = 'inline-block';
-                    btnRejeitar.style.display = 'inline-block';
-                }
-            }
-        } catch (error) {
-            console.error('Erro ao validar permissão do workflow:', error);
         }
+    };
+
+    window.LuminaWorkflowPage = {
+        getState: () => state
+    };
+
+    const badges = {
+        priority: {
+            ALTA: ['bg-danger', 'Alta', 'fas fa-arrow-up'],
+            MEDIA: ['bg-warning', 'Media', 'fas fa-equals'],
+            BAIXA: ['bg-success', 'Baixa', 'fas fa-arrow-down']
+        },
+        status: {
+            EM_ANDAMENTO: ['bg-info', 'Em andamento', 'fas fa-clock'],
+            APROVADO: ['bg-success', 'Aprovado', 'fas fa-check-circle'],
+            REJEITADO: ['bg-danger', 'Rejeitado', 'fas fa-times-circle']
+        },
+        category: {
+            REQUISITOS: ['bg-info', 'Requisitos'],
+            NORMAS: ['bg-secondary', 'Normas'],
+            PROCEDIMENTOS: ['bg-primary', 'Procedimentos']
+        },
+        actions: {
+            CRIACAO: { icon: 'fas fa-sparkles', color: 'bg-info', title: 'Criacao' },
+            EDICAO: { icon: 'fas fa-pen', color: 'bg-primary', title: 'Edicao' },
+            APROVACAO: { icon: 'fas fa-check', color: 'bg-success', title: 'Aprovacao' },
+            APROVACAO_FINAL: { icon: 'fas fa-seal-check', color: 'bg-success', title: 'Aprovacao final' },
+            REPROVACAO: { icon: 'fas fa-ban', color: 'bg-danger', title: 'Reprovacao' }
+        }
+    };
+
+    function init() {
+        cacheDom();
+        bindEvents();
+        bootstrapPage();
     }
 
-    /*
-    * Carrega todos os dados do workflow do backend e inicia o preenchimento da página.
-    */
-    async function carregarDadosDoWorkflow() {
-        if (!workflowId || workflowId === 0) {
-            Swal.fire({
-                icon: 'error',
-                title: 'ID inválido',
-                text: 'Não foi possível identificar o workflow.'
-            });
-            window.history.back();
-            return;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=carregarWorkflowPorId&id=${workflowId}`;
+    function cacheDom() {
+        dom.workflowTitle = document.getElementById('workflowTitulo');
+        dom.workflowStatus = document.getElementById('workflowStatus');
+        dom.workflowPriority = document.getElementById('workflowPrioridade');
+        dom.workflowCategory = document.getElementById('workflowCategoria');
+        dom.workflowDescription = document.getElementById('workflowDescricao');
+        dom.workflowCreator = document.getElementById('workflowCriador');
+        dom.workflowCreatedAt = document.getElementById('workflowDataCriacao');
+        dom.deadline = document.getElementById('prazoFinal');
+        dom.idDisplay = document.getElementById('workflowIdDisplay');
+        dom.timeline = document.getElementById('timeline-items');
+        dom.responsaveis = document.getElementById('responsaveisContainer');
+        dom.anexos = document.getElementById('anexosContainer');
+        dom.selectResponsavel = document.getElementById('selectResponsavel');
+        dom.btnAddResponsible = document.getElementById('btnAdicionarResponsavel');
+        dom.btnConfirmResponsible = document.getElementById('btnConfirmarResponsavel');
+        dom.btnApprove = document.getElementById('btnAprovar');
+        dom.btnReject = document.getElementById('btnRejeitar');
+        dom.btnEdit = document.getElementById('btnEditar');
+        dom.btnPdf = document.getElementById('btnGerarPDF');
+        dom.formJustification = document.getElementById('formJustificativa');
+        dom.formEdit = document.getElementById('formEditarWorkflow');
+        dom.formReviewOwner = document.getElementById('formRevisaoDono');
+        dom.formReviewUser = document.getElementById('formRevisaoUsuario');
+        dom.btnAcceptOwnerRejection = document.getElementById('btn-aceitar-rejeicao-dono');
+        dom.btnApproveUserRejection = document.getElementById('btn-aprovar-rejeicao-usuario');
+        dom.btnSendOwnerReview = document.getElementById('btn-enviar-revisao-dono');
+        dom.btnSendUserReview = document.getElementById('btn-enviar-revisao-usuario');
+        dom.chatMessages = document.getElementById('chatMessagesContainer');
+        dom.addResponsibleModal = document.getElementById('addResponsavelModal');
+        dom.reviewOwnerModal = document.getElementById('revisaoDonoModal');
+        dom.reviewUserModal = document.getElementById('revisaoUsuarioModal');
+    }
+
+    function bindEvents() {
+        dom.btnApprove.addEventListener('click', () => openJustificationModal('aprovar'));
+        dom.btnReject.addEventListener('click', () => openJustificationModal('rejeitar'));
+        dom.btnEdit.addEventListener('click', openEditModal);
+        dom.btnAddResponsible.addEventListener('click', openAddResponsibleModal);
+        dom.btnConfirmResponsible.addEventListener('click', handleAddResponsible);
+
+        dom.formJustification.addEventListener('submit', handleSubmitDecision);
+        dom.formEdit.addEventListener('submit', handleEditWorkflow);
+        dom.formReviewOwner.addEventListener('submit', (event) => event.preventDefault());
+        dom.formReviewUser.addEventListener('submit', (event) => event.preventDefault());
+        dom.btnAcceptOwnerRejection.addEventListener('click', handleOwnerRejectionAcceptance);
+        dom.btnApproveUserRejection.addEventListener('click', handleUserRejectionApproval);
+        dom.btnSendOwnerReview.addEventListener('click', () => handleReturnReview('owner'));
+        dom.btnSendUserReview.addEventListener('click', () => handleReturnReview('user'));
+
+        document.addEventListener('click', handleDelegatedClick);
+    }
+
+    async function bootstrapPage() {
+        const loader = LuminaUI.loading('Carregando workflow...', 'Montando a visao completa do fluxo.');
+
         try {
-            const response = await fetch(endpoint, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                credentials: 'include'
-            });
-            if (!response.ok) {
-                throw new Error(`Erro HTTP: ${response.status}`);
-            }
-            const result = await response.json();
-            if (result.status === 'success' && result.data) {
-                preencherDadosWorkflow(result.data);
-                await configurarAcoes(result.data);
-            } else {
-                throw new Error(result.message || 'Workflow não encontrado');
-            }
+            await refreshWorkflowStatus();
+            await Promise.all([loadWorkflow(), loadPermissionSnapshot(), loadUsers()]);
+            renderWorkflow();
+            renderResponsiblePeople();
+            renderAttachments();
+            await loadTimeline();
+            renderActions();
+            loader.close();
         } catch (error) {
-            console.error('Erro ao carregar workflow:', error);
-            Swal.fire({
+            loader.close();
+            await LuminaUI.modalAlert({
                 icon: 'error',
                 title: 'Erro ao carregar workflow',
-                text: error.message || 'Não foi possível carregar os dados do workflow.'
-            }).then(() => {
-                window.history.back();
+                text: error.message || 'Nao foi possivel carregar os dados do workflow.'
             });
+            window.history.back();
         }
     }
 
-    /*
-    * Preenche os dados do Workflow
-    */
-    async function preencherDadosWorkflow(workflow) {
-        document.getElementById('workflowTitulo').textContent = workflow.titulo;
-        const prazoFinalElement = document.getElementById('prazoFinal');
-        if (workflow.prazo_final) {
-            const dataPrazo = new Date(workflow.prazo_final);
-            const dataFormatada = dataPrazo.toLocaleDateString('pt-BR');
-            const hoje = new Date();
-            hoje.setHours(0, 0, 0, 0);
-            dataPrazo.setHours(0, 0, 0, 0);
-            if (dataPrazo < hoje) {
-                prazoFinalElement.className = 'd-flex align-items-center mb-2 fw-bold text-danger';
-            } else if (dataPrazo.getTime() === hoje.getTime()) {
-                prazoFinalElement.className = 'd-flex align-items-center mb-2 fw-bold text-warning';
-            } else {
-                prazoFinalElement.className = 'd-flex align-items-center mb-2 fw-bold text-success';
-            }
-            prazoFinalElement.innerHTML = `<i class="fas fa-calendar-day me-2"></i>Prazo Final: ${dataFormatada}`;
-        } else {
-            prazoFinalElement.innerHTML = `<i class="fas fa-calendar-day me-2"></i>Prazo Final: Não definido`;
-            prazoFinalElement.className = 'd-flex align-items-center mb-2 fw-bold text-muted';
+    async function refreshWorkflowStatus() {
+        try {
+            await LuminaHttp.postJson(ROUTES.updateStatus, { workflowId });
+        } catch (error) {
+            console.debug('Falha ao atualizar status de workflow:', error.message);
         }
-        const descricaoElement = document.getElementById('workflowDescricao');
-        const descricao = workflow.descricao || 'Sem descrição';
-        descricaoElement.textContent = descricao;
-        descricaoElement.className = 'mb-0 text-dark lh-base' + (descricao === 'Sem descrição' ? ' text-muted fst-italic' : '');
-        const prioridadeElement = document.getElementById('workflowPrioridade');
-        prioridadeElement.innerHTML = getPrioridadeBadgeHTML(workflow.prioridade || 'MEDIA');
-        const categoriaElement = document.getElementById('workflowCategoria');
-        categoriaElement.innerHTML = getCategoriaBadgeHTML(workflow.categoria || 'Não definida');
-        const statusElement = document.getElementById('workflowStatus');
-        statusElement.innerHTML = getStatusBadgeHTML(workflow.status || 'EM_ANDAMENTO');
-        document.getElementById('workflowCriador').textContent = workflow.nome_criador || 'Usuário não identificado';
-        document.getElementById('workflowDataCriacao').textContent = formatarData(workflow.data_criacao);
-        const usuarioDono = await getIsOwnerWorkflow();
-        carregarResponsaveis(workflow.responsaveis || [], usuarioDono);
-        carregarAnexos(workflow.anexos || []);
-        verificaRevisaoWorkflow();
-        carregarEtapas();
     }
 
-    /*
-    * Função para retornar o HTML do badge de prioridade
-    */
-    function getPrioridadeBadgeHTML(prioridade) {
-        const config = {
-            'ALTA': { icon: 'fas fa-exclamation-triangle', text: 'Alta', class: 'badge bg-info text-white px-3 py-2' },
-            'MEDIA': { icon: 'fas fa-minus-circle', text: 'Média', class: 'badge bg-info text-dark px-3 py-2' },
-            'BAIXA': { icon: 'fas fa-check-circle', text: 'Baixa', class: 'badge bg-info text-white px-3 py-2' }
-        };
-        const cfg = config[prioridade] || { icon: 'fas fa-question-circle', text: prioridade, class: 'badge bg-secondary text-white px-3 py-2' };
-        return `<span class="${cfg.class}"><i class="${cfg.icon} me-1"></i> ${cfg.text}</span>`;
-    }
-
-    /*
-    * Função para retornar o HTML do badge de categoria
-    */
-    function getCategoriaBadgeHTML(categoria) {
-        const config = {
-            'REQUISITOS': { text: 'Requisitos', class: 'badge bg-info text-white px-3 py-2' },
-            'NORMAS': { text: 'Normas', class: 'badge bg-info text-dark px-3 py-2' },
-            'PROCEDIMENTOS': { text: 'Procedimentos', class: 'badge bg-info text-white px-3 py-2' }
-        };
-        const cfg = config[categoria] || { text: categoria, class: 'badge bg-secondary text-white px-3 py-2' };
-        return `<span class="${cfg.class}">${cfg.text}</span>`;
-    }
-
-    /*
-    * Função para retornar o HTML do badge de status
-    */
-    function getStatusBadgeHTML(status) {
-        const config = {
-            'EM_ANDAMENTO': { icon: 'fas fa-sync-alt fa-spin', text: 'Em Andamento', class: 'badge bg-info text-white px-3 py-2' },
-            'APROVADO': { icon: 'fas fa-check-circle', text: 'Aprovado', class: 'badge bg-info text-white px-3 py-2' },
-            'REJEITADO': { icon: 'fas fa-times-circle', text: 'Rejeitado', class: 'badge bg-info text-white px-3 py-2' }
-        };
-        const cfg = config[status] || { icon: 'fas fa-question-circle', text: status, class: 'badge bg-secondary text-white px-3 py-2' };
-        return `<span class="${cfg.class}"><i class="${cfg.icon} me-1"></i> ${cfg.text}</span>`;
-    }
-
-    /*
-    * Formata uma data no formato brasileiro
-    */
-    function formatarData(dataString) {
-        if (!dataString) return 'Data não disponível';
-        const data = new Date(dataString);
-        return data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR');
-    }
-
-    /*
-    * Formata o tamanho do arquivo em uma unidade legível (Bytes, KB, MB, GB)
-    */
-    function formatarTamanhoArquivo(bytes) {
-        if (!bytes || bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
-
-    /*
-    * Retorna o ícone apropriado para o tipo MIME do arquivo
-    */
-    function getIconePorTipo(tipo) {
-        if (!tipo) return 'fas fa-file';
-        const icones = {
-            'pdf': 'fas fa-file-pdf text-danger', 'image': 'fas fa-file-image text-success',
-            'video': 'fas fa-file-video text-warning', 'audio': 'fas fa-file-audio text-info',
-            'zip': 'fas fa-file-archive text-secondary', 'word': 'fas fa-file-word text-primary',
-            'excel': 'fas fa-file-excel text-success', 'powerpoint': 'fas fa-file-powerpoint text-danger',
-            'text': 'fas fa-file-alt text-muted', 'code': 'fas fa-file-code text-info'
-        };
-        if (tipo.includes('pdf')) return icones.pdf;
-        if (tipo.includes('image')) return icones.image;
-        if (tipo.includes('video')) return icones.video;
-        if (tipo.includes('audio')) return icones.audio;
-        if (tipo.includes('zip') || tipo.includes('rar')) return icones.zip;
-        if (tipo.includes('word')) return icones.word;
-        if (tipo.includes('excel')) return icones.excel;
-        if (tipo.includes('powerpoint')) return icones.powerpoint;
-        if (tipo.includes('text')) return icones.text;
-        if (tipo.includes('javascript') || tipo.includes('php') || tipo.includes('html')) return icones.code;
-        return 'fas fa-file text-muted';
-    }
-
-    /*
-    * Carrega os responsáveis no container designado no formato de cards
-    */
-    function carregarResponsaveis(responsaveis, usuarioDono = false) {
-        const container = document.getElementById('responsaveisContainer');
-        const btnAdicionar = document.getElementById('btnAdicionarResponsavel');
-        if (btnAdicionar) {
-            btnAdicionar.style.display = usuarioDono ? 'inline-block' : 'none';
+    async function loadWorkflow() {
+        const result = await LuminaHttp.get(ROUTES.workflow);
+        if (result.status !== 'success' || !result.data) {
+            throw new Error(result.message || 'Workflow nao encontrado');
         }
-        if (responsaveis.length === 0) {
-            container.innerHTML = `
-        <div class="col-12">
-            <div class="card">
-                <div class="card-body text-center text-muted py-4">
-                    <i class="fas fa-users fa-2x mb-3 opacity-50"></i>
-                    <p class="mb-0">Nenhum responsável atribuído</p>
-                </div>
-            </div>
-        </div>`;
+
+        state.workflow = result.data;
+    }
+
+    async function loadPermissionSnapshot() {
+        const [userIdResult, ownerResult, approvedResult, responsibleResult, rejectedResult, approvedByUserResult, reviewResult] = await Promise.all([
+            LuminaHttp.get(ROUTES.userId),
+            LuminaHttp.get(ROUTES.owner),
+            LuminaHttp.postJson(ROUTES.approved, { workflowId }),
+            LuminaHttp.postJson(ROUTES.responsible, { workflowId }),
+            LuminaHttp.postJson(ROUTES.userRejected, { workflowId }),
+            LuminaHttp.postJson(ROUTES.userApproved, { workflowId }),
+            LuminaHttp.postJson(ROUTES.reviewStatus, { workflowId })
+        ]);
+
+        state.permissions.currentUserId = Number(userIdResult.id || 0);
+        state.permissions.isOwner = Boolean(ownerResult.data?.isOwner);
+        state.permissions.isApproved = Boolean(approvedResult.data?.aprovado);
+        state.permissions.isResponsible = Boolean(responsibleResult.data?.isResponsavel);
+        state.permissions.userRejected = Boolean(rejectedResult.data?.temReprovacao);
+        state.permissions.userApproved = Boolean(approvedByUserResult.data?.temAprovacao);
+        state.permissions.reviewStatus = {
+            etapasEmRevisao: reviewResult.data?.etapas_em_revisao || [],
+            totalEtapasRevisao: reviewResult.data?.total_etapas_revisao || 0
+        };
+    }
+
+    async function loadUsers() {
+        const result = await LuminaHttp.get(ROUTES.users);
+        state.users = result.data || [];
+    }
+
+    async function loadTimeline() {
+        const result = await LuminaHttp.get(ROUTES.steps);
+        if (!result.success) {
+            throw new Error(result.message || 'Nao foi possivel carregar a timeline');
+        }
+
+        state.timeline = result.data || [];
+        renderTimeline();
+    }
+
+    function renderWorkflow() {
+        const workflow = state.workflow;
+        dom.workflowTitle.textContent = workflow.titulo || 'Sem titulo';
+        dom.idDisplay.textContent = `Workflow #${workflow.id}`;
+        dom.workflowDescription.textContent = workflow.descricao || 'Sem descricao';
+        dom.workflowDescription.classList.toggle('is-empty', !workflow.descricao);
+        dom.workflowCreator.textContent = workflow.nome_criador || 'Usuario nao identificado';
+        dom.workflowCreatedAt.textContent = LuminaUI.formatDateTime(workflow.data_criacao);
+        dom.workflowPriority.innerHTML = buildPriorityBadge(workflow.prioridade);
+        dom.workflowStatus.innerHTML = buildStatusBadge(workflow.status);
+        dom.workflowCategory.innerHTML = buildCategoryBadge(workflow.categoria);
+        renderDeadline(workflow.prazo_final);
+        fillEditForm(workflow);
+    }
+
+    function renderDeadline(value) {
+        if (!value) {
+            dom.deadline.className = 'deadline-card deadline-card--neutral';
+            dom.deadline.innerHTML = '<i class="fas fa-calendar-day me-2"></i>Prazo final nao definido';
             return;
         }
-        container.innerHTML = responsaveis.map(resp => `
-    <div class="col-12 mb-3">
-        <div class="card h-100 shadow-sm border-0">
-            <div class="card-body p-3">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div class="d-flex align-items-center">
-                        <div class="flex-shrink-0">
-                            <div class="bg-info rounded-circle d-flex align-items-center justify-content-center text-white" 
-                                 style="width: 50px; height: 50px;">
-                                <i class="fas fa-user fa-lg"></i>
-                            </div>
-                        </div>
-                        <div class="flex-grow-1 ms-3">
-                            <h6 class="card-title mb-1 text-dark fw-bold">${resp.nome_usuario || 'Usuário'}</h6>
-                            <p class="card-text mb-0 text-muted small">
-                                <i class="fas fa-at me-1"></i>${resp.usuario_login || ''}
-                            </p>
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const date = new Date(value);
+        date.setHours(0, 0, 0, 0);
+
+        const modifier = date < today
+            ? 'deadline-card--late'
+            : date.getTime() === today.getTime()
+                ? 'deadline-card--today'
+                : 'deadline-card--ok';
+
+        dom.deadline.className = `deadline-card ${modifier}`;
+        dom.deadline.innerHTML = `<i class="fas fa-calendar-day me-2"></i>Prazo final: ${LuminaUI.formatDate(value)}`;
+    }
+
+    function renderResponsiblePeople() {
+        const people = state.workflow.responsaveis || [];
+
+        dom.btnAddResponsible.style.display = state.permissions.isOwner ? 'inline-flex' : 'none';
+
+        if (!people.length) {
+            dom.responsaveis.innerHTML = `
+                <div class="col-12">
+                    <div class="empty-state-card">
+                        <i class="fas fa-users"></i>
+                        <strong>Nenhum responsavel atribuido</strong>
+                        <span>Adicione pessoas para distribuir a validacao do fluxo.</span>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        dom.responsaveis.innerHTML = people.map((person) => `
+            <div class="col-12 mb-3">
+                <article class="person-card">
+                    <div class="person-card__identity">
+                        <span class="person-card__avatar">
+                            <i class="fas fa-user"></i>
+                        </span>
+                        <div>
+                            <strong>${LuminaUI.escapeHtml(person.nome_usuario || 'Usuario')}</strong>
+                            <span>@${LuminaUI.escapeHtml(person.usuario_login || 'sem-login')}</span>
                         </div>
                     </div>
-                    ${usuarioDono ? `
-                    <button class="btn btn-sm btn-danger btn-remover-responsavel" 
-                            data-user-id="${resp.id || resp.usuario_id}"
-                            data-user-name="${resp.nome_usuario || 'Usuário'}"
-                            title="Remover responsável">
-                        <i class="fas fa-trash"></i>
-                    </button>
+                    ${state.permissions.isOwner ? `
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger btn-remove-responsavel"
+                            data-user-id="${person.usuario_id || person.id}"
+                            data-user-name="${LuminaUI.escapeHtml(person.nome_usuario || 'Usuario')}">
+                            <i class="fas fa-trash"></i>
+                        </button>
                     ` : ''}
-                </div>
-            </div>
-        </div>
-    </div>
-    `).join('');
-        if (usuarioDono) {
-            document.querySelectorAll('.btn-remover-responsavel').forEach(btn => {
-                btn.addEventListener('click', function () {
-                    const userId = this.getAttribute('data-user-id');
-                    const userName = this.getAttribute('data-user-name');
-                    removerResponsavel(userId, userName);
-                });
-            });
-        }
-    }
-
-    /*
-    * Carrega os anexos no container designado 
-    */
-    function carregarAnexos(anexos) {
-        const container = document.getElementById('anexosContainer');
-        if (anexos.length === 0) {
-            container.innerHTML = `<div class="col-12 text-center py-5"><i class="fas fa-folder-open fa-3x text-muted mb-3"></i><h5 class="text-muted">Nenhum anexo encontrado</h5></div>`;
-            return;
-        }
-        container.innerHTML = anexos.map(anexo => `
-            <div class="col-xl-4 col-lg-6 col-md-6 mb-3">
-                <div class="card h-100 shadow-sm hover-shadow">
-                    <div class="card-body p-3">
-                        <div class="text-center mb-3">
-                            <i class="${getIconePorTipo(anexo.tipo)} fa-3x mb-2"></i>
-                            <h6 class="card-title text-truncate text-dark fw-bold" title="${anexo.nome_arquivo}">${anexo.nome_arquivo || 'Arquivo'}</h6>
-                        </div>
-                        <div class="small text-muted text-center mb-3">
-                            <div class="mb-1"><i class="fas fa-hdd me-1"></i> ${formatarTamanhoArquivo(anexo.tamanho)}</div>
-                            <div><i class="fas fa-calendar me-1"></i> ${formatarData(anexo.data_upload)}</div>
-                        </div>
-                        <a href="${anexo.caminho_arquivo}" class="btn btn-primary btn-sm w-100" target="_blank" download="${anexo.nome_arquivo}">
-                            <i class="fas fa-download me-1"></i> Baixar
-                        </a>
-                    </div>
-                </div>
+                </article>
             </div>
         `).join('');
     }
 
-    /*
-    * Abre o modal de justificativa para aprovação ou rejeição
-    */
-    function abrirModalJustificativa(acao) {
-        const modal = new bootstrap.Modal(document.getElementById('justificativaModal'));
-        const header = document.getElementById('justificativaModalHeader');
-        const titulo = document.getElementById('justificativaModalLabel');
-        document.getElementById('acaoTipo').value = acao;
-        document.getElementById('textoJustificativa').value = '';
-        if (acao === 'aprovar') {
-            header.className = 'modal-header bg-success text-white';
-            titulo.innerHTML = '<i class="fas fa-check-circle me-2"></i> Justificativa de Aprovação';
-        } else if (acao === "rejeitar") {
-            header.className = 'modal-header bg-danger text-white';
-            titulo.innerHTML = '<i class="fas fa-times-circle me-2"></i> Justificativa de Rejeição';
-            carregarUsuarios();
-        }
-        modal.show();
-    }
+    function renderAttachments() {
+        const attachments = state.workflow.anexos || [];
 
-    /*
-    * Função para buscar os usuários e carregar no select
-    */
-    async function carregarUsuarios() {
-        const endpoint = '/app/routers/workflow/WorkFlowRouter.php?action=carregarUsuarios';
-        try {
-            const response = await fetch(endpoint, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                credentials: 'include'
-            });
-            if (!response.ok) throw new Error(`Erro HTTP: ${response.status}`);
-            const result = await response.json();
-            if (result.status !== 'success' || !Array.isArray(result.data)) {
-                throw new Error('Resposta inválida do servidor');
-            }
-            const selectElement = document.getElementById('selectResponsavel');
-            if (selectElement) {
-                selectElement.innerHTML = '';
-                const defaultOption = document.createElement('option');
-                defaultOption.value = '';
-                defaultOption.textContent = 'Selecione...';
-                selectElement.appendChild(defaultOption);
-                result.data.forEach(usuario => {
-                    const option = document.createElement('option');
-                    option.value = usuario.ID;
-                    option.textContent = usuario.USUARIO;
-                    selectElement.appendChild(option);
-                });
-                if ($(selectElement).hasClass('select2-hidden-accessible')) {
-                    $(selectElement).select2('destroy');
-                }
-                $(selectElement).select2({
-                    placeholder: "Selecione o responsável",
-                    allowClear: true,
-                    width: '100%',
-                    dropdownParent: $('#addResponsavelModal')
-                });
-            }
-        } catch (error) {
-            console.error("Erro ao carregar usuários:", error);
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: 'Não foi possível carregar a lista de usuários.'
-            });
-        }
-    }
-
-    /*
-    * Abre o modal de visualização da justificativa na timeline
-    */
-    function abrirModalJustificativaTimeline(justificativa, titulo, usuario, data) {
-        const modalHTML = `
-        <div class="modal fade" id="justificativaTimelineModal" tabindex="-1">
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header bg-primary text-white">
-                        <h5 class="modal-title">
-                            <i class="fas fa-file-alt me-2"></i>${titulo}
-                        </h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="row mb-3">
-                            <div class="col-md-6">
-                                <strong><i class="fas fa-user me-1"></i>Usuário:</strong>
-                                <p class="mb-0">${usuario}</p>
-                            </div>
-                            <div class="col-md-6">
-                                <strong><i class="fas fa-calendar me-1"></i>Data:</strong>
-                                <p class="mb-0">${data}</p>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <strong><i class="fas fa-comment me-1"></i>Justificativa:</strong>
-                            <div class="p-3 mt-2">
-                                ${justificativa.replace(/\n/g, '<br>')}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                            <i class="fas fa-times me-1"></i> Fechar
-                        </button>
+        if (!attachments.length) {
+            dom.anexos.innerHTML = `
+                <div class="col-12">
+                    <div class="empty-state-card">
+                        <i class="fas fa-paperclip"></i>
+                        <strong>Nenhum anexo encontrado</strong>
+                        <span>Arquivos relacionados ao workflow aparecerao aqui.</span>
                     </div>
                 </div>
-            </div>
-        </div>`;
-        const existingModal = document.getElementById('justificativaTimelineModal');
-        if (existingModal) {
-            const existingBsModal = bootstrap.Modal.getInstance(existingModal);
-            if (existingBsModal) {
-                existingBsModal.dispose();
-            }
-            existingModal.remove();
+            `;
+            return;
         }
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-        const modal = new bootstrap.Modal(document.getElementById('justificativaTimelineModal'));
+
+        dom.anexos.innerHTML = attachments.map((attachment) => `
+            <div class="col-xl-4 col-md-6 mb-3">
+                <article class="attachment-card">
+                    <span class="attachment-card__icon">
+                        <i class="${getAttachmentIcon(attachment.tipo)}"></i>
+                    </span>
+                    <strong title="${LuminaUI.escapeHtml(attachment.nome_arquivo)}">${LuminaUI.escapeHtml(attachment.nome_arquivo)}</strong>
+                    <span>${LuminaUI.formatBytes(Number(attachment.tamanho || 0))}</span>
+                    <span>${LuminaUI.formatDateTime(attachment.data_upload)}</span>
+                    <a class="btn btn-primary btn-sm" href="${attachment.caminho_arquivo}" target="_blank" download="${LuminaUI.escapeHtml(attachment.nome_arquivo)}">
+                        <i class="fas fa-download"></i> Baixar
+                    </a>
+                </article>
+            </div>
+        `).join('');
+    }
+
+    function renderTimeline() {
+        if (!state.timeline.length) {
+            dom.timeline.innerHTML = `
+                <div class="empty-state-card">
+                    <i class="fas fa-stream"></i>
+                    <strong>Nenhuma acao registrada</strong>
+                    <span>O historico do workflow aparecera aqui conforme as etapas forem executadas.</span>
+                </div>
+            `;
+            return;
+        }
+
+        dom.timeline.innerHTML = state.timeline.map((step) => {
+            const action = badges.actions[step.tipo_acao] || { icon: 'fas fa-circle', color: 'bg-secondary', title: step.tipo_acao };
+            const review = state.permissions.reviewStatus.etapasEmRevisao.find((item) => Number(item.etapa_id) === Number(step.id));
+            const needsReview = step.tipo_acao === 'REPROVACAO' && review;
+            const reviewButton = buildReviewButton(step, review);
+            const chatButton = step.tipo_acao === 'REPROVACAO'
+                ? `<button type="button" class="btn btn-sm btn-outline-secondary btn-chat" data-etapa-id="${step.id}"><i class="fas fa-comments"></i> Chat</button>`
+                : '';
+            const justificationButton = step.justificativa
+                ? `<button type="button" class="btn btn-sm btn-outline-info btn-justificativa" data-etapa-id="${step.id}"><i class="fas fa-eye"></i> Ver justificativa</button>`
+                : '';
+
+            return `
+                <article class="timeline-item">
+                    <span class="timeline-dot ${action.color}">
+                        <i class="${action.icon}"></i>
+                    </span>
+                    <div class="timeline-card">
+                        <div class="timeline-card__head">
+                            <div>
+                                <h6>${action.title}</h6>
+                                <p>${LuminaUI.escapeHtml(step.descricao || step.tipo_acao)}</p>
+                            </div>
+                            <small>${LuminaUI.formatDateTime(step.data_hora)}</small>
+                        </div>
+                        <div class="timeline-card__meta">
+                            <span><i class="fas fa-user me-1"></i>${LuminaUI.escapeHtml(step.usuario_nome || 'Usuario nao identificado')}</span>
+                        </div>
+                        ${needsReview ? buildReviewAlert(review) : ''}
+                        <div class="timeline-card__actions">
+                            ${justificationButton}
+                            ${chatButton}
+                            ${reviewButton}
+                        </div>
+                    </div>
+                </article>
+            `;
+        }).join('');
+    }
+
+    function renderActions() {
+        const { workflow } = state;
+        const { permissions } = state;
+        const hasPendingOwnerReview = permissions.reviewStatus.etapasEmRevisao.some((item) => item.revisao_dono);
+
+        dom.btnApprove.style.display = 'none';
+        dom.btnReject.style.display = 'none';
+        dom.btnEdit.style.display = 'none';
+
+        if (permissions.isOwner) {
+            dom.btnEdit.style.display = workflow.status !== 'APROVADO' && workflow.status !== 'REJEITADO' ? 'inline-flex' : 'none';
+            return;
+        }
+
+        const canAct = permissions.isResponsible &&
+            !permissions.isApproved &&
+            !permissions.userApproved &&
+            !permissions.userRejected &&
+            !hasPendingOwnerReview &&
+            workflow.status !== 'REJEITADO';
+
+        if (canAct) {
+            dom.btnApprove.style.display = 'inline-flex';
+            dom.btnReject.style.display = 'inline-flex';
+        }
+    }
+
+    function fillEditForm(workflow) {
+        document.getElementById('editarTitulo').value = workflow.titulo || '';
+        document.getElementById('editarDescricao').value = workflow.descricao || '';
+        document.getElementById('editarPrioridade').value = normalize(workflow.prioridade || 'MEDIA');
+        document.getElementById('editarCategoria').value = workflow.categoria || '';
+    }
+
+    function buildPriorityBadge(value) {
+        const [className, label, icon] = badges.priority[normalize(value)] || ['bg-secondary', value || 'N/D', 'fas fa-circle'];
+        return `<span class="badge ${className}"><i class="${icon} me-1"></i>${LuminaUI.escapeHtml(label)}</span>`;
+    }
+
+    function buildStatusBadge(value) {
+        const [className, label, icon] = badges.status[value] || ['bg-secondary', value || 'N/D', 'fas fa-circle'];
+        return `<span class="badge ${className}"><i class="${icon} me-1"></i>${LuminaUI.escapeHtml(label)}</span>`;
+    }
+
+    function buildCategoryBadge(value) {
+        const [className, label] = badges.category[value] || ['bg-secondary', value || 'Nao definida'];
+        return `<span class="badge ${className}">${LuminaUI.escapeHtml(label)}</span>`;
+    }
+
+    function buildReviewAlert(review) {
+        const ownerReview = Boolean(review?.revisao_dono);
+        const label = ownerReview
+            ? 'O dono do workflow precisa revisar esta reprovacao.'
+            : 'O usuario que reprovou precisa revisar esta acao.';
+
+        return `
+            <div class="review-alert ${ownerReview ? 'review-alert--owner' : 'review-alert--user'}">
+                <i class="fas ${ownerReview ? 'fa-exclamation-triangle' : 'fa-info-circle'}"></i>
+                <span>${label}</span>
+            </div>
+        `;
+    }
+
+    function buildReviewButton(step, review) {
+        if (!review) {
+            return '';
+        }
+
+        const isStepOwner = Number(step.usuario_id) === state.permissions.currentUserId;
+
+        if (review.revisao_dono && state.permissions.isOwner) {
+            return `<button type="button" class="btn btn-sm btn-outline-warning btn-review" data-revision-type="owner" data-etapa-id="${step.id}">
+                <i class="fas fa-clipboard-check"></i> Revisar
+            </button>`;
+        }
+
+        if (review.revisao_usuario && isStepOwner) {
+            return `<button type="button" class="btn btn-sm btn-outline-info btn-review" data-revision-type="user" data-etapa-id="${step.id}">
+                <i class="fas fa-clipboard-check"></i> Revisar
+            </button>`;
+        }
+
+        return '';
+    }
+
+    function openJustificationModal(action) {
+        const modalElement = document.getElementById('justificativaModal');
+        const title = document.getElementById('justificativaModalLabel');
+        const header = document.getElementById('justificativaModalHeader');
+        const textarea = document.getElementById('textoJustificativa');
+
+        document.getElementById('acaoTipo').value = action;
+        textarea.value = '';
+
+        if (action === 'aprovar') {
+            header.className = 'modal-header modal-header--success';
+            title.innerHTML = '<i class="fas fa-check-circle me-2"></i>Justificativa de aprovacao';
+        } else {
+            header.className = 'modal-header modal-header--danger';
+            title.innerHTML = '<i class="fas fa-times-circle me-2"></i>Justificativa de rejeicao';
+        }
+
+        bootstrap.Modal.getOrCreateInstance(modalElement).show();
+    }
+
+    function openEditModal() {
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editarWorkflowModal')).show();
+    }
+
+    function openAddResponsibleModal() {
+        const modal = bootstrap.Modal.getOrCreateInstance(dom.addResponsibleModal);
+        renderUserSelectOptions();
         modal.show();
-        document.getElementById('justificativaTimelineModal').addEventListener('hidden.bs.modal', function () {
-            const bsModal = bootstrap.Modal.getInstance(this);
-            if (bsModal) {
-                bsModal.dispose();
-            }
-            this.remove();
+    }
+
+    function openReviewModal(type, etapaId) {
+        const modalElement = type === 'owner' ? dom.reviewOwnerModal : dom.reviewUserModal;
+        modalElement.dataset.etapaId = String(etapaId);
+        const textareaId = type === 'owner' ? 'justificativaRevisaoDono' : 'justificativaRevisaoUsuario';
+        document.getElementById(textareaId).value = '';
+        bootstrap.Modal.getOrCreateInstance(modalElement).show();
+    }
+
+    function openTimelineJustification(step) {
+        LuminaUI.modalAlert({
+            icon: 'info',
+            title: step.tipo_acao,
+            html: `
+                <div class="text-start">
+                    <p><strong>Usuario:</strong> ${LuminaUI.escapeHtml(step.usuario_nome || 'Nao identificado')}</p>
+                    <p><strong>Data:</strong> ${LuminaUI.formatDateTime(step.data_hora)}</p>
+                    <hr>
+                    <p>${LuminaUI.escapeHtml(step.justificativa || 'Sem justificativa')}</p>
+                </div>
+            `
         });
     }
 
-    /*
-    * Abre o modal de edição do workflow
-    */
-    function abrirModalEditar(workflow) {
-        document.getElementById('editarTitulo').value = workflow.titulo || '';
-        document.getElementById('editarDescricao').value = workflow.descricao || '';
-        document.getElementById('editarPrioridade').value = workflow.prioridade || 'MEDIA';
-        document.getElementById('editarCategoria').value = workflow.categoria || 'PROJETO';
-        const modal = new bootstrap.Modal(document.getElementById('editarWorkflowModal'));
-        modal.show();
+    async function openChatModal(stepId) {
+        dom.chatMessages.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2">Carregando mensagens...</p>
+            </div>
+        `;
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('chatReprovacaoModal')).show();
+
+        try {
+            const result = await LuminaHttp.get(`${ROUTES.chat}&etapaId=${stepId}`);
+            renderChatMessages(result.data || []);
+        } catch (error) {
+            dom.chatMessages.innerHTML = `
+                <div class="text-center text-danger py-4">
+                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                    <p>${LuminaUI.escapeHtml(error.message)}</p>
+                </div>
+            `;
+        }
     }
 
-    /*
-    * Carrega as etapas do workflow e preenche a timeline
-    */
-    function carregarEtapas() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para carregar etapas.");
-            document.getElementById('timeline-items').innerHTML = `
-            <div class="text-center py-4 text-warning">
-                <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
-                <p>ID do workflow não identificado</p>
-            </div>`;
+    function renderChatMessages(messages) {
+        if (!messages.length) {
+            dom.chatMessages.innerHTML = `
+                <div class="empty-state-card empty-state-card--chat">
+                    <i class="fas fa-comments"></i>
+                    <strong>Nenhuma mensagem no chat</strong>
+                    <span>As trocas sobre esta reprovacao apareceram aqui.</span>
+                </div>
+            `;
             return;
         }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=getEtapas&workflowId=${workflowId}`;
-        fetch(endpoint, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            credentials: 'include'
-        })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Erro HTTP: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                const container = document.getElementById('timeline-items');
-                if (data.success && data.data && data.data.length > 0) {
-                    return gerarTimelineItems(data.data).then(html => {
-                        container.innerHTML = html;
-                    });
-                } else {
-                    container.innerHTML = `
-                <div class="text-center py-4">
-                    <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
-                    <p class="text-muted">Nenhuma ação registrada no histórico</p>
-                </div>`;
-                }
-            })
-            .catch(error => {
-                console.error('Erro ao carregar etapas:', error);
-                document.getElementById('timeline-items').innerHTML = `
-            <div class="text-center py-4 text-danger">
-                <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
-                <p>Erro ao carregar histórico</p>
-                <small class="text-muted">${error.message}</small>
-            </div>`;
-            });
+
+        dom.chatMessages.innerHTML = messages.map((message) => {
+            const isCurrentUser = Number(message.user) === state.permissions.currentUserId;
+            return `
+                <div class="chat-bubble ${isCurrentUser ? 'chat-bubble--mine' : 'chat-bubble--other'}">
+                    <div class="chat-bubble__meta">
+                        <strong>${LuminaUI.escapeHtml(message.usuario || 'Usuario')}</strong>
+                        <small>${LuminaUI.formatDateTime(message.data_hora)}</small>
+                    </div>
+                    <p>${LuminaUI.escapeHtml(message.justificativa || '')}</p>
+                </div>
+            `;
+        }).join('');
+
+        dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
     }
 
-    /*
-    * Função para obter o ID do usuário atual
-    */
-    async function obterUsuarioIdAtual() {
-        try {
-            const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=obterUsuarioIdAtual`;
-            const response = await fetch(endpoint, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                credentials: 'include'
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success && data.id) {
-                    console.log("DADOS VINDOS DO BANCO: ", data);
-                    return data.id;
-                } else if (data.id) {
-                    return data.id;
-                } else if (data.usuarioId) {
-                    return data.usuarioId;
-                }
-            }
-            return null;
-        } catch (error) {
-            console.error('Erro ao obter ID do usuário:', error);
-            return null;
-        }
-    }
+    async function handleSubmitDecision(event) {
+        event.preventDefault();
+        const action = document.getElementById('acaoTipo').value;
+        const justification = document.getElementById('textoJustificativa').value.trim();
 
-    /*
-    * Event Listener para botões de revisão
-    */
-    document.addEventListener('click', function (e) {
-        if (e.target.classList.contains('btn-revisar-workflow') ||
-            e.target.closest('.btn-revisar-workflow')) {
-            const button = e.target.classList.contains('btn-revisar-workflow') ?
-                e.target : e.target.closest('.btn-revisar-workflow');
-            const tipoRevisao = button.getAttribute('data-tipo-revisao');
-            const etapaId = button.getAttribute('data-etapa-id');
-            if (tipoRevisao === 'dono') {
-                abrirModalRevisaoDono(etapaId);
-            } else if (tipoRevisao === 'usuario') {
-                abrirModalRevisaoUsuario(etapaId);
-            }
-        }
-    });
-
-    /*
-    * Função auxiliar para obter se o usuário é dono do workflow
-    */
-    async function getIsOwnerWorkflow() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para verificação de permissão.");
-            return false;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=getValidateOwner&id=${workflowId}`;
-        try {
-            const response = await fetch(endpoint);
-            if (!response.ok) {
-                throw new Error(`Erro na requisição de permissão: ${response.statusText}`);
-            }
-            const data = await response.json();
-            return data.status === 'success' && data.data ? data.data.isOwner : false;
-        } catch (error) {
-            console.error('Erro ao validar permissão do workflow:', error);
-            return false;
-        }
-    }
-
-    /*
-    * Função para abrir modal de revisão do dono - VERSÃO CORRIGIDA
-    */
-    function abrirModalRevisaoDono(etapaId) {
-        const modal = document.getElementById('revisaoDonoModal');
-        modal.setAttribute('data-etapa-id', etapaId);
-        document.getElementById('justificativaRevisaoDono').value = '';
-        const bootstrapModal = new bootstrap.Modal(modal);
-        bootstrapModal.show();
-    }
-
-    /*
-   * Função para abrir modal de revisão do usuário - VERSÃO CORRIGIDA
-   */
-    function abrirModalRevisaoUsuario(etapaId) {
-        const modal = document.getElementById('revisaoUsuarioModal');
-        modal.setAttribute('data-etapa-id', etapaId);
-        document.getElementById('justificativaRevisaoUsuario').value = '';
-        const bootstrapModal = new bootstrap.Modal(modal);
-        bootstrapModal.show();
-    }
-
-    /*
-    * Event Listener para submissão do formulário de revisão do dono
-    */
-    document.getElementById('formRevisaoDono').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        await processarRevisao('dono');
-    });
-
-    /*
-    * Event Listener para submissão do formulário de revisão do usuário
-    */
-    document.getElementById('formRevisaoUsuario').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        await processarRevisao('usuario');
-    });
-
-    /*
-    * Event Listener para botões de ver justificativa na timeline
-    */
-    document.addEventListener('click', function (e) {
-        if (e.target.classList.contains('btn-ver-justificativa') ||
-            e.target.closest('.btn-ver-justificativa')) {
-            const button = e.target.classList.contains('btn-ver-justificativa') ?
-                e.target : e.target.closest('.btn-ver-justificativa');
-            const justificativa = button.getAttribute('data-justificativa');
-            const titulo = button.getAttribute('data-titulo');
-            const usuario = button.getAttribute('data-usuario');
-            const data = button.getAttribute('data-data');
-            abrirModalJustificativaTimeline(justificativa, titulo, usuario, data);
-        }
-    });
-
-    /*
-    * Retorna a configuração visual para cada tipo de ação na timeline 
-    */
-    async function verificaAprovado() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para verificação de aprovação.");
-            return false;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=verificaAprovado`;
-        try {
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ workflowId }),
-            });
-            if (!response.ok) {
-                throw new Error("Erro ao verificar aprovação do workflow.");
-            }
-            const data = await response.json();
-            const aprovado = data?.data?.aprovado === true;
-            return aprovado;
-        } catch (error) {
-            console.error("Erro na verificação de aprovação:", error);
-            return false;
-        }
-    }
-
-    /*
-    * Valida se o usuário logado é um dos responsáveis pelo workflow
-    */
-    async function validarResponsavel() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para verificação de aprovação.");
-            return false;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=validarResponsavel`;
-        try {
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ workflowId }),
-            });
-            if (!response.ok) {
-                throw new Error("Erro ao verificar aprovação do workflow.");
-            }
-            const data = await response.json();
-            return data?.data?.isResponsavel === true;
-        } catch (error) {
-            throw new Error("Erro na verificação do responsável: " + error.message);
-        }
-    }
-
-    /*
-    * Verifica se o usuário reprovou o workflow
-    */
-    async function verificaReprovacaoUsuario() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para verificação de reprovação.");
-            return false;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=verificaReprovacaoUsuario`;
-        try {
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ workflowId }),
-                credentials: "include"
-            });
-            if (!response.ok) {
-                throw new Error("Erro ao verificar reprovação do workflow.");
-            }
-            const data = await response.json();
-            return Boolean(data?.data?.temReprovacao);
-        } catch (error) {
-            console.error("Erro na verificação de reprovação:", error);
-            return false;
-        }
-    }
-
-    /*
-    * Verifica se o usuário aprovou o workflow
-    */
-    async function verificaAprovacaoUsuario() {
-        if (!workflowId || workflowId === 0) {
-            console.error("ID do workflow inválido para verificação de aprovação.");
-            return false;
-        }
-        const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=verificaAprovacaoUsuario`;
-        try {
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ workflowId }),
-                credentials: "include"
-            });
-            if (!response.ok) {
-                throw new Error("Erro ao verificar aprovação do workflow.");
-            }
-            const data = await response.json();
-            return Boolean(data?.data?.temAprovacao); // Mudei para temAprovacao
-        } catch (error) {
-            console.error("Erro na verificação de aprovação:", error);
-            return false;
-        }
-    }
-
-    /*
-    * Retorna a configuração visual para cada tipo de ação na timeline 
-    */
-    function getConfiguracaoAcao(acao) {
-        const configs = {
-            'CRIACAO': { icone: 'fas fa-plus', cor: 'bg-primary', titulo: 'Workflow Criado' },
-            'EDICAO': { icone: 'fas fa-edit', cor: 'bg-warning', titulo: 'Workflow Atualizado' },
-            'APROVACAO': { icone: 'fas fa-check', cor: 'bg-success', titulo: 'Workflow Aprovado pelo Usuário' },
-            'APROVACAO_FINAL': { icone: 'fas fa-check', cor: 'bg-success', titulo: 'Workflow Finalizado' },
-            'REPROVACAO': { icone: 'fas fa-times', cor: 'bg-danger', titulo: 'Workflow Rejeitado' },
-            'COMENTARIO': { icone: 'fas fa-comment', cor: 'bg-info', titulo: 'Comentário Adicionado' },
-            'ANEXO_ADICIONADO': { icone: 'fas fa-upload', cor: 'bg-secondary', titulo: 'Arquivo Anexado' },
-        };
-        return configs[acao] || { icone: 'fas fa-circle', cor: 'bg-dark', titulo: 'Ação Realizada' };
-    }
-
-    /*
-    * Event Listener para submissão do formulário de justificativa (aprovar/rejeitar)
-    */
-    document.getElementById('formJustificativa').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        const acao = document.getElementById('acaoTipo').value;
-        const justificativa = document.getElementById('textoJustificativa').value;
-        const selectResp = document.getElementById('workflowResponsaveis');
-        if (!justificativa.trim()) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Justificativa obrigatória',
-                text: 'Por favor, informe uma justificativa.'
-            });
+        if (!justification) {
+            await LuminaUI.modalAlert({ icon: 'warning', title: 'Justificativa obrigatoria', text: 'Informe uma justificativa para continuar.' });
             return;
         }
-        const novoResp = (acao === 'rejeitar' && selectResp && selectResp.value) ? selectResp.value : null;
-        try {
-            const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=${acao}PorUsuarioWorkflow`;
-            const payload = {
-                workflowId: workflowId,
-                justificativa
-            };
-            if (novoResp) {
-                payload.novo_resp = novoResp;
-            }
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: `Workflow ${acao === 'aprovar' ? 'aprovado' : 'rejeitado'}!`,
-                    text: result.message || 'Ação realizada com sucesso.'
-                }).then(() => {
-                    bootstrap.Modal.getInstance(document.getElementById('justificativaModal')).hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao processar ação');
-            }
-        } catch (error) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Não foi possível processar a ação.'
-            });
-        }
-    });
 
-    /*
-    * Verifica com quem esta a revisão
-    */
-    async function verificaRevisaoWorkflow() {
-        if (!workflowId) return { etapasEmRevisao: [], totalEtapasRevisao: 0 };
+        const endpoint = action === 'aprovar' ? ROUTES.approve : ROUTES.rejectByUser;
+        const loader = LuminaUI.loading('Salvando decisao...', 'Registrando sua acao neste workflow.');
+
         try {
-            const response = await fetch('/app/routers/workflow/WorkFlowRouter.php?action=verificaRevisaoWorkflow', {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ workflowId }),
-                credentials: "include"
-            });
-            const data = await response.json();
-            return {
-                etapasEmRevisao: data?.data?.etapas_em_revisao || [],
-                totalEtapasRevisao: data?.data?.total_etapas_revisao || 0
-            };
+            await LuminaHttp.postJson(endpoint, { workflowId, justificativa: justification });
+            loader.close();
+            bootstrap.Modal.getInstance(document.getElementById('justificativaModal'))?.hide();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Acao registrada', action === 'aprovar' ? 'Workflow aprovado.' : 'Rejeicao registrada.');
         } catch (error) {
-            console.error("Erro na verificação de revisão:", error);
-            return { etapasEmRevisao: [], totalEtapasRevisao: 0 };
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro', text: error.message });
         }
     }
 
-    /*
-    * Configura os botões de ação com base no status do workflow e permissões
-    */
-    async function configurarAcoes(workflow) {
-        const btnAprovar = document.getElementById('btnAprovar');
-        const btnRejeitar = document.getElementById('btnRejeitar');
-        const btnEditar = document.getElementById('btnEditar');
-        btnAprovar.style.display = 'none';
-        btnRejeitar.style.display = 'none';
-        btnEditar.style.display = 'none';
-        const aprovado = await verificaAprovado();
-        const isResponsavel = await validarResponsavel();
-        const isReproved = await verificaReprovacaoUsuario();
-        const isAproved = await verificaAprovacaoUsuario();
-        const usuarioDono = await getIsOwnerWorkflow();
-        if (!isReproved && !isAproved) {
-            if (isResponsavel) {
-                if (aprovado || workflow.status === 'APROVADO' || workflow.status === 'REJEITADO') {
-                } else {
-                    const temPermissao = await getPermissionOwnerWorkflow();
-                    if (temPermissao) {
-                        btnAprovar.style.display = 'inline-block';
-                        btnRejeitar.style.display = 'inline-block';
-                    }
-                }
-            }
-        }
-        if (usuarioDono) {
-            if (!aprovado && workflow.status !== 'APROVADO' && workflow.status !== 'REJEITADO') {
-                btnEditar.style.display = 'inline-block';
-            }
-        }
-        if (btnAprovar.style.display !== 'none') {
-            btnAprovar.title = 'Aprovar este workflow';
-            btnAprovar.replaceWith(btnAprovar.cloneNode(true));
-            const novoBtnAprovar = document.getElementById('btnAprovar');
-            novoBtnAprovar.addEventListener('click', () => abrirModalJustificativa('aprovar'));
-        }
-        if (btnRejeitar.style.display !== 'none') {
-            btnRejeitar.title = 'Rejeitar este workflow';
-            btnRejeitar.replaceWith(btnRejeitar.cloneNode(true));
-            const novoBtnRejeitar = document.getElementById('btnRejeitar');
-            novoBtnRejeitar.addEventListener('click', () => abrirModalJustificativa('rejeitar'));
-        }
-        if (btnEditar.style.display !== 'none') {
-            btnEditar.title = 'Editar informações do workflow';
-            btnEditar.replaceWith(btnEditar.cloneNode(true));
-            const novoBtnEditar = document.getElementById('btnEditar');
-            novoBtnEditar.addEventListener('click', () => abrirModalEditar(workflow));
-        }
-    }
+    async function handleEditWorkflow(event) {
+        event.preventDefault();
 
-    /*
-    * Event Listener para submissão do formulário de edição do workflow
-    */
-    document.getElementById('formEditarWorkflow').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        const dadosAtualizados = {
+        const payload = {
             id: workflowId,
-            titulo: document.getElementById('editarTitulo').value,
-            descricao: document.getElementById('editarDescricao').value,
+            titulo: document.getElementById('editarTitulo').value.trim(),
+            descricao: document.getElementById('editarDescricao').value.trim(),
             prioridade: document.getElementById('editarPrioridade').value,
             categoria: document.getElementById('editarCategoria').value
         };
-        try {
-            const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=atualizarWorkflow`;
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                body: JSON.stringify(dadosAtualizados),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Workflow atualizado!',
-                    text: result.message || 'Alterações salvas com sucesso.'
-                }).then(() => {
-                    bootstrap.Modal.getInstance(document.getElementById('editarWorkflowModal')).hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao atualizar workflow');
-            }
-        } catch (error) {
-            Swal.fire({ icon: 'error', title: 'Erro', text: error.message || 'Não foi possível atualizar o workflow.' });
-        }
-    });
 
-    /*
-    * Event Listener aceitar rejeicao por parte do dono
-    */
-    document.getElementById('btn-aceitar-rejeicao-dono').addEventListener('click', async function (e) {
-        e.preventDefault();
-        const justificativa = document.getElementById('justificativaRevisaoDono').value;
-        if (!justificativa.trim()) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Campo obrigatório',
-                text: 'Por favor, digite uma justificativa.'
-            });
-            return;
-        }
-        try {
-            const endpoint = "/app/routers/workflow/WorkFlowRouter.php?action=rejeitarWorkflow";
-            const payload = {
-                workflowId,
-                justificativa
-            };
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Rejeição aceita!',
-                    text: result.message || 'Workflow rejeitado com sucesso.'
-                }).then(() => {
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('revisaoDonoModal'));
-                    modal.hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao processar ação');
-            }
-        } catch (error) {
-            console.error('Erro:', error);
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Erro ao aceitar a rejeição!'
-            });
-        }
-    });
+        const loader = LuminaUI.loading('Atualizando workflow...', 'Aplicando alteracoes.');
 
-    /*
-    * Event Listener enviar aprovação do usuario após revisão
-    */
-    document.getElementById('btn-aprovar-rejeicao-usuario').addEventListener('click', async function (e) {
-        e.preventDefault();
-        const justificativa = document.getElementById('justificativaRevisaoUsuario').value;
-        if (!justificativa.trim()) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Campo obrigatório',
-                text: 'Por favor, digite uma justificativa.'
-            });
-            return;
-        }
         try {
-            const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=aprovarPorUsuarioWorkflow`;
-            const payload = {
-                workflowId,
-                justificativa
-            };
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Workflow aprovado!',
-                    text: result.message || 'Ação realizada com sucesso.'
-                }).then(() => {
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('revisaoUsuarioModal'));
-                    modal.hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao processar ação');
-            }
+            await LuminaHttp.postJson(ROUTES.edit, payload);
+            loader.close();
+            bootstrap.Modal.getInstance(document.getElementById('editarWorkflowModal'))?.hide();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Workflow atualizado', 'As informacoes foram atualizadas.');
         } catch (error) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Não foi possível processar a ação.'
-            });
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro ao atualizar', text: error.message });
         }
-    });
-
-    /*
-    * Event Listener Devolver rejeição dono
-    */
-    document.getElementById('btn-enviar-revisao-dono').addEventListener('click', async function (e) {
-        e.preventDefault();
-        const justificativa = document.getElementById('justificativaRevisaoDono').value;
-        const modal = document.getElementById('revisaoDonoModal');
-        const etapaId = modal.getAttribute('data-etapa-id');
-        if (!justificativa.trim()) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Campo obrigatório',
-                text: 'Por favor, digite uma justificativa.'
-            });
-            return;
-        }
-        if (!etapaId) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: 'ID da etapa não identificado.'
-            });
-            return;
-        }
-        try {
-            const endpoint = '/app/routers/workflow/WorkFlowRouter.php?action=devolverRevisaoDono';
-            const payload = {
-                workflowId,
-                etapaId,
-                justificativa
-            };
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Rejeição aceita!',
-                    text: result.message || 'Workflow rejeitado com sucesso.'
-                }).then(() => {
-                    const modalInstance = bootstrap.Modal.getInstance(modal);
-                    modalInstance.hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao processar ação');
-            }
-        } catch (error) {
-            console.error('Erro:', error);
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Erro ao aceitar a rejeição!'
-            });
-        }
-    });
-
-    /*
-    * Event Listener Devolver rejeição usuário
-    */
-    document.getElementById('btn-enviar-revisao-usuario').addEventListener('click', async function (e) {
-        e.preventDefault();
-        const justificativa = document.getElementById('justificativaRevisaoUsuario').value;
-        const modal = document.getElementById('revisaoUsuarioModal');
-        const etapaId = modal.getAttribute('data-etapa-id');
-        if (!justificativa.trim()) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Campo obrigatório',
-                text: 'Por favor, digite uma justificativa.'
-            });
-            return;
-        }
-        if (!etapaId) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: 'ID da etapa não identificado.'
-            });
-            return;
-        }
-        try {
-            const endpoint = '/app/routers/workflow/WorkFlowRouter.php?action=devolverRevisaoUsuario';
-            const payload = {
-                workflowId,
-                etapaId,
-                justificativa
-            };
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Rejeição revisada!',
-                    text: result.message || 'Revisão enviada com sucesso.'
-                }).then(() => {
-                    const modalInstance = bootstrap.Modal.getInstance(modal);
-                    modalInstance.hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao processar ação');
-            }
-        } catch (error) {
-            console.error('Erro:', error);
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Erro ao enviar a revisão!'
-            });
-        }
-    });
-
-    /*
-    * Gera o HTML dos itens da timeline com base nas etapas fornecidas
-    */
-    async function gerarTimelineItems(etapas) {
-        const statusRevisao = await verificaRevisaoWorkflow();
-        const usuarioDono = await getIsOwnerWorkflow();
-        const usuarioIdAtual = await obterUsuarioIdAtual();
-        let timelineHTML = '';
-        timelineHTML += etapas.map((etapa, index) => {
-            const { icone, cor, titulo } = getConfiguracaoAcao(etapa.tipo_acao);
-            const dataFormatada = formatarData(etapa.data_hora);
-            const textoJustificativa = etapa.justificativa || etapa.observacoes || etapa.descricao || '';
-            const temJustificativa = textoJustificativa.trim() !== '';
-            const etapaRejeitada = etapa.tipo_acao === 'REPROVACAO';
-            const etapaId = etapa.id;
-            const etapaEmRevisao = statusRevisao.etapasEmRevisao.find(
-                revisao => parseInt(revisao.etapa_id) === parseInt(etapaId)
-            );
-            const precisaRevisao = etapaRejeitada && etapaEmRevisao;
-            const precisaRevisaoDono = precisaRevisao && etapaEmRevisao?.revisao_dono;
-            const precisaRevisaoUsuario = precisaRevisao && etapaEmRevisao?.revisao_usuario;
-            const usuarioReprovouEstaEtapa = etapaRejeitada &&
-                etapa.usuario_id &&
-                usuarioIdAtual &&
-                etapa.usuario_id.toString() === usuarioIdAtual.toString();
-            let botaoRevisaoHTML = '';
-            let botaoChatHTML = '';
-            if (etapaRejeitada) {
-                botaoChatHTML = `
-            <button 
-                type="button"
-                class="btn btn-sm btn-outline-secondary border-0 mx-1 btn-chat-reprovacao hover-bg"
-                data-etapa-id="${etapaId}"
-                data-tipo-acao="${etapa.tipo_acao}"
-                title="Abrir chat desta reprovação">
-                <i class="fas fa-comments me-1"></i> Chat
-            </button>`;
-            }
-            if (precisaRevisao) {
-                const tipoRevisao = precisaRevisaoDono ? 'dono' : 'usuario';
-                const textoBotao = precisaRevisaoDono ? 'Revisar como Dono' : 'Revisar Minha Ação';
-                const classeCor = precisaRevisaoDono ? 'warning' : 'info';
-                let mostrarBotao = false;
-                if (precisaRevisaoDono) {
-                    mostrarBotao = usuarioDono;
-                } else {
-                    mostrarBotao = usuarioReprovouEstaEtapa;
-                }
-                if (mostrarBotao) {
-                    botaoRevisaoHTML = `
-                <button 
-                    type="button"
-                    class="btn btn-sm btn-outline-${classeCor} border-0 mx-1 btn-revisar-workflow hover-bg"
-                    data-tipo-revisao="${tipoRevisao}"
-                    data-etapa-id="${etapaId}">
-                    <i class="fas fa-clipboard-check me-1"></i> ${textoBotao}
-                </button>`;
-                }
-            }
-            let avisoHTML = '';
-            if (precisaRevisao) {
-                const mensagem = precisaRevisaoDono
-                    ? 'O dono do workflow precisa revisar esta rejeição.'
-                    : 'O usuário que rejeitou precisa revisar esta ação.';
-                const tipoAlerta = precisaRevisaoDono ? 'warning' : 'info';
-                const iconeAlerta = precisaRevisaoDono ? 'exclamation-triangle' : 'info-circle';
-                avisoHTML = `
-            <div class="alert alert-${tipoAlerta} mt-2 py-2" role="alert">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div class="d-flex align-items-center">
-                        <i class="fas fa-${iconeAlerta} me-2"></i>
-                        <small class="flex-grow-1"><strong>Revisão Pendente:</strong> ${mensagem}</small>
-                    </div>
-                    <div class="d-flex align-items-center">
-                        ${botaoChatHTML}
-                        ${botaoRevisaoHTML}
-                    </div>
-                </div>
-            </div>`;
-            } else if (etapaRejeitada) {
-                avisoHTML = `
-            <div class="alert alert-secondary mt-2 py-2" role="alert">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div class="d-flex align-items-center">
-                        <i class="fas fa-times-circle me-2"></i>
-                        <small class="flex-grow-1"><strong>Reprovação:</strong> Esta etapa foi reprovada.</small>
-                    </div>
-                    <div class="d-flex align-items-center">
-                        ${botaoChatHTML}
-                    </div>
-                </div>
-            </div>`;
-            }
-            const indicadorRevisao = precisaRevisao ?
-                `<span class="position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle"></span>` : '';
-            const mostrarBotaoJustificativa = temJustificativa;
-            return `
-        <div class="d-flex mb-4 position-relative">
-            <div class="flex-shrink-0 ${cor} rounded-circle d-flex align-items-center justify-content-center text-white z-1 position-relative" style="width: 40px; height: 40px;">
-                <i class="${icone}"></i>
-                ${indicadorRevisao}
-            </div>
-            <div class="flex-grow-1 ms-3">
-                <div class="d-flex justify-content-between align-items-start">
-                    <h6 class="mb-1 ${precisaRevisao ? 'text-warning' : ''}">
-                        ${titulo}
-                        ${precisaRevisao ? '<span class="badge bg-warning ms-2">Revisão Pendente</span>' : ''}
-                    </h6>
-                    <small class="text-muted">${dataFormatada}</small>
-                </div>
-                <p class="mb-1 text-muted">${etapa.descricao || etapa.etapa}</p>
-                ${avisoHTML}
-                <div class="d-flex align-items-center mt-2">
-                    <small class="text-muted">
-                        <i class="fas fa-user me-1"></i>${etapa.usuario_nome || 'Usuário não identificado'}
-                    </small>
-                    ${mostrarBotaoJustificativa ? `
-                    <button 
-                        type="button"
-                        class="btn btn-sm btn-outline-info border-0 mx-4 btn-ver-justificativa hover-bg"
-                        data-justificativa="${textoJustificativa}" 
-                        data-titulo="${titulo}"
-                        data-usuario="${etapa.usuario_nome || 'Usuário não identificado'}"
-                        data-data="${dataFormatada}">
-                        <i class="fas fa-eye me-1"></i> Ver Justificativa
-                    </button>
-                    ` : ''}
-                </div>
-            </div>
-        </div>`;
-        }).join('');
-        return timelineHTML;
     }
 
-    /*
-    * Event Listener para abrir chat de reprovação
-    */
-    document.addEventListener('click', function (e) {
-        if (e.target.classList.contains('btn-chat-reprovacao') ||
-            e.target.closest('.btn-chat-reprovacao')) {
-            e.preventDefault();
-            const button = e.target.classList.contains('btn-chat-reprovacao') ?
-                e.target : e.target.closest('.btn-chat-reprovacao');
-            const etapaId = button.getAttribute('data-etapa-id');
-            abrirChatReprovacao(etapaId);
-        }
-    });
-
-    /*
-    * Abre o chat de reprovação para uma etapa específica
-    */
-    function abrirChatReprovacao(etapaId) {
-        if (!etapaId) {
-            console.error('ID da etapa não fornecido para abrir o chat');
+    async function handleOwnerRejectionAcceptance() {
+        const justification = document.getElementById('justificativaRevisaoDono').value.trim();
+        if (!justification) {
+            await LuminaUI.modalAlert({ icon: 'warning', title: 'Justificativa obrigatoria', text: 'Informe a justificativa antes de continuar.' });
             return;
         }
-        const modalChat = new bootstrap.Modal(document.getElementById('chatReprovacaoModal'));
-        const modalElement = document.getElementById('chatReprovacaoModal');
-        modalElement.setAttribute('data-etapa-id', etapaId);
-        document.getElementById('chatMessagesContainer').innerHTML = '<div class="text-center"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">Carregando mensagens...</p></div>';
-        carregarMensagensChat(etapaId);
-        modalChat.show();
+
+        const loader = LuminaUI.loading('Rejeitando workflow...', 'Concluindo a revisao do dono.');
+
+        try {
+            await LuminaHttp.postJson(ROUTES.rejectByOwner, { workflowId, justificativa: justification });
+            loader.close();
+            bootstrap.Modal.getInstance(dom.reviewOwnerModal)?.hide();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Workflow rejeitado', 'A revisao foi concluida.');
+        } catch (error) {
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro', text: error.message });
+        }
     }
 
-    /*
-    * Carrega as mensagens do chat para uma etapa específica
-    */
-    async function carregarMensagensChat(etapaId) {
+    async function handleUserRejectionApproval() {
+        const justification = document.getElementById('justificativaRevisaoUsuario').value.trim();
+        if (!justification) {
+            await LuminaUI.modalAlert({ icon: 'warning', title: 'Justificativa obrigatoria', text: 'Informe a justificativa antes de continuar.' });
+            return;
+        }
+
+        const loader = LuminaUI.loading('Aprovando workflow...', 'Processando a aprovacao apos revisao.');
+
         try {
-            const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=getChatReprovacao&etapaId=${etapaId}`;
-            const response = await fetch(endpoint, {
-                method: 'GET',
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                credentials: 'include'
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const result = await response.json();
-            if (result.status === 'success') {
-                exibirMensagensChat(result.data);
-            } else {
-                throw new Error(result.message || 'Erro ao carregar mensagens');
-            }
+            await LuminaHttp.postJson(ROUTES.approve, { workflowId, justificativa: justification });
+            loader.close();
+            bootstrap.Modal.getInstance(dom.reviewUserModal)?.hide();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Workflow aprovado', 'A revisao do usuario foi concluida.');
         } catch (error) {
-            console.error('Erro ao carregar mensagens do chat:', error);
-            document.getElementById('chatMessagesContainer').innerHTML = `
-            <div class="text-center text-danger py-4">
-                <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
-                <p>Erro ao carregar mensagens</p>
-                <small class="text-muted">${error.message}</small>
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro', text: error.message });
+        }
+    }
+
+    async function handleReturnReview(type) {
+        const isOwnerFlow = type === 'owner';
+        const modalElement = isOwnerFlow ? dom.reviewOwnerModal : dom.reviewUserModal;
+        const textareaId = isOwnerFlow ? 'justificativaRevisaoDono' : 'justificativaRevisaoUsuario';
+        const justification = document.getElementById(textareaId).value.trim();
+        const etapaId = Number(modalElement.dataset.etapaId || 0);
+
+        if (!justification || !etapaId) {
+            await LuminaUI.modalAlert({ icon: 'warning', title: 'Dados incompletos', text: 'Preencha a justificativa para devolver a revisao.' });
+            return;
+        }
+
+        const endpoint = isOwnerFlow ? ROUTES.returnOwnerReview : ROUTES.returnUserReview;
+        const loader = LuminaUI.loading('Devolvendo revisao...', 'Atualizando o fluxo de analise.');
+
+        try {
+            await LuminaHttp.postJson(endpoint, { workflowId, etapaId, justificativa: justification });
+            loader.close();
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Revisao devolvida', 'A etapa foi enviada para nova avaliacao.');
+        } catch (error) {
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro', text: error.message });
+        }
+    }
+
+    async function handleAddResponsible() {
+        const userId = Number(dom.selectResponsavel.value || 0);
+        if (!userId) {
+            await LuminaUI.modalAlert({ icon: 'warning', title: 'Selecione um usuario', text: 'Escolha um usuario para adicionar como responsavel.' });
+            return;
+        }
+
+        const loader = LuminaUI.loading('Adicionando responsavel...', 'Registrando a nova atribuicao.');
+
+        try {
+            await LuminaHttp.postJson(ROUTES.addResponsible, { workflowId, userId });
+            loader.close();
+            bootstrap.Modal.getInstance(dom.addResponsibleModal)?.hide();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Responsavel adicionado', 'A equipe do workflow foi atualizada.');
+        } catch (error) {
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro', text: error.message });
+        }
+    }
+
+    async function handleRemoveResponsible(userId, userName) {
+        const choices = state.users.filter((user) => Number(user.ID) !== Number(userId));
+
+        const selectHtml = `
+            <div class="text-start">
+                <p>Substitua <strong>${LuminaUI.escapeHtml(userName)}</strong> por outro responsavel.</p>
+                <select id="novoResponsavelSelect" class="form-select">
+                    <option value="">Selecione um novo responsavel</option>
+                    ${choices.map((user) => `<option value="${user.ID}">${LuminaUI.escapeHtml(user.USUARIO)} - ${LuminaUI.escapeHtml(user.NOME)}</option>`).join('')}
+                </select>
             </div>
         `;
-        }
-    }
 
-    /*
-    * Exibe as mensagens no container do chat
-    */
-    async function exibirMensagensChat(mensagens) {
-        const container = document.getElementById('chatMessagesContainer');
-        if (!mensagens || mensagens.length === 0) {
-            container.innerHTML = `
-        <div class="text-center text-muted py-4">
-            <i class="fas fa-comments fa-2x mb-2"></i>
-            <p>Nenhuma mensagem no chat ainda</p>
-            <small class="text-muted">As mensagens aparecerão aqui quando houver comunicação sobre esta reprovação.</small>
-        </div>`;
+        const result = await LuminaUI.confirm({
+            icon: 'warning',
+            title: 'Remover responsavel',
+            html: selectHtml,
+            showCancelButton: true,
+            confirmButtonText: 'Substituir',
+            cancelButtonText: 'Cancelar',
+            didOpen: () => {
+                $('#novoResponsavelSelect').select2({
+                    placeholder: 'Selecione um novo responsavel',
+                    width: '100%',
+                    dropdownParent: $('.swal2-container')
+                });
+            },
+            preConfirm: () => {
+                const replacement = document.getElementById('novoResponsavelSelect').value;
+                if (!replacement) {
+                    Swal.showValidationMessage('Selecione um novo responsavel');
+                    return false;
+                }
+                return replacement;
+            }
+        });
+
+        if (!result.isConfirmed) {
             return;
         }
-        const usuarioAtualId = await obterUsuarioIdAtual();
-        const mensagensHTML = mensagens.map(mensagem => {
-            const dataHora = formatarDataHoraChat(mensagem.data_hora || new Date().toISOString());
-            const usuarioId = mensagem.user;
-            const usuarioNome = mensagem.usuario;
-            const isUsuarioAtual = parseInt(usuarioId) === parseInt(usuarioAtualId);
-            const bubbleClass = isUsuarioAtual
-                ? "bg-info text-white"
-                : "bg-light";
-            const alignClass = isUsuarioAtual
-                ? "justify-content-end"
-                : "justify-content-start";
-            const textAlignClass = isUsuarioAtual
-                ? "text-end"
-                : "text-start";
-            return `
-        <div class="d-flex ${alignClass} mb-3">
-            <div class="w-100">
-                <div class="d-flex justify-content-between align-items-center mb-1 ${textAlignClass}">
-                    <small class="fw-bold ${isUsuarioAtual ? 'text-white' : 'text-white'}">${usuarioNome || 'Usuário'}</small>
-                    <small class="${isUsuarioAtual ? 'text-white' : 'text-white'} ms-2">${dataHora}</small>
-                </div>
-                <div class="card ${bubbleClass}">
-                    <div class="card-body p-3">
-                        <p class="card-text mb-0 text-white">${mensagem.justificativa || ''}</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-        `;
-        }).join('');
-        container.innerHTML = mensagensHTML;
-        container.scrollTop = container.scrollHeight;
+
+        const loader = LuminaUI.loading('Atualizando responsaveis...', 'Aplicando a substituicao.');
+
+        try {
+            await LuminaHttp.postJson(ROUTES.removeResponsible, {
+                workflowId,
+                userId,
+                novoResponsavelId: Number(result.value)
+            });
+            loader.close();
+            await refreshPageData();
+            LuminaUI.toast('success', 'Responsavel substituido', 'A lista de responsaveis foi atualizada.');
+        } catch (error) {
+            loader.close();
+            LuminaUI.modalAlert({ icon: 'error', title: 'Erro', text: error.message });
+        }
     }
 
-    /*
-    * Formata data/hora para exibição no chat
-    */
-    function formatarDataHoraChat(dataHoraString) {
-        const data = new Date(dataHoraString);
-        return data.toLocaleString('pt-BR', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
+    function renderUserSelectOptions() {
+        const existingResponsibleIds = new Set((state.workflow.responsaveis || []).map((person) => String(person.usuario_id || person.id)));
+        const availableUsers = state.users.filter((user) => !existingResponsibleIds.has(String(user.ID)));
+
+        dom.selectResponsavel.innerHTML = `
+            <option value="">Selecione um usuario</option>
+            ${availableUsers.map((user) => `<option value="${user.ID}">${LuminaUI.escapeHtml(user.USUARIO)} - ${LuminaUI.escapeHtml(user.NOME)}</option>`).join('')}
+        `;
+
+        if ($(dom.selectResponsavel).hasClass('select2-hidden-accessible')) {
+            $(dom.selectResponsavel).select2('destroy');
+        }
+
+        $(dom.selectResponsavel).select2({
+            placeholder: 'Selecione o responsavel',
+            width: '100%',
+            dropdownParent: $('#addResponsavelModal')
         });
     }
 
-    /*
-    * Função para abrir modal de add responsavel
-    */
-    document.getElementById('btnAdicionarResponsavel').addEventListener('click', async function (e) {
-        const modal = new bootstrap.Modal(document.getElementById('addResponsavelModal'));
-        const selectElement = document.getElementById('selectResponsavel');
-        selectElement.innerHTML = '<option value="">Selecione...</option>';
-        modal.show();
-        const modalElement = document.getElementById('addResponsavelModal');
-        modalElement.addEventListener('shown.bs.modal', async function () {
-            await carregarUsuarios();
-        }, { once: true });
-    });
+    async function refreshPageData() {
+        await Promise.all([loadWorkflow(), loadPermissionSnapshot()]);
+        renderWorkflow();
+        renderResponsiblePeople();
+        renderAttachments();
+        await loadTimeline();
+        renderActions();
+    }
 
-    /*
-    * Função para adicionar responsável
-    */
-    document.getElementById('btnConfirmarResponsavel').addEventListener('click', async function (e) {
-        const selectElement = document.getElementById('selectResponsavel');
-        const userId = selectElement.value;
-        if (!userId) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Selecione um usuário',
-                text: 'Por favor, selecione um usuário para adicionar como responsável.'
-            });
+    function handleDelegatedClick(event) {
+        const justificationButton = event.target.closest('.btn-justificativa');
+        if (justificationButton) {
+            const step = state.timeline.find((item) => Number(item.id) === Number(justificationButton.dataset.etapaId));
+            if (step) {
+                openTimelineJustification(step);
+            }
             return;
         }
-        try {
-            const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=adicionarResponsavel`;
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({
-                    workflowId: workflowId,
-                    userId: userId
-                }),
-                credentials: 'include'
-            });
-            const result = await response.json();
-            if (result.status === 'success') {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Responsável adicionado!',
-                    text: result.message || 'Responsável adicionado com sucesso.'
-                }).then(() => {
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('addResponsavelModal'));
-                    modal.hide();
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(result.message || 'Erro ao adicionar responsável');
-            }
-        } catch (error) {
-            console.error('Erro ao adicionar responsável:', error);
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Não foi possível adicionar o responsável.'
-            });
-        }
-    });
 
-    /*
-    * Função para remover um responsável do workflow
-    */
-    async function removerResponsavel(userId, userName) {
-        if (!workflowId || !userId || userId === 'undefined') {
-            console.error('ID do workflow ou usuário inválido:', { workflowId, userId });
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: 'ID do usuário inválido. Não foi possível remover o responsável.'
-            });
+        const chatButton = event.target.closest('.btn-chat');
+        if (chatButton) {
+            openChatModal(Number(chatButton.dataset.etapaId));
             return;
         }
-        try {
-            const endpoint = '/app/routers/workflow/WorkFlowRouter.php?action=carregarUsuarios';
-            const response = await fetch(endpoint, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                credentials: 'include'
-            });
-            if (!response.ok) throw new Error(`Erro HTTP: ${response.status}`);
-            const result = await response.json();
-            if (result.status !== 'success' || !Array.isArray(result.data)) {
-                throw new Error('Resposta inválida do servidor');
-            }
-            const usuariosDisponiveis = result.data.filter(usuario => usuario.ID !== userId);
-            const selectHtml = `
-            <div class="mb-3">
-                <label for="novoResponsavelSelect" class="form-label">Selecione o novo responsável:</label>
-                <select id="novoResponsavelSelect" class="form-select">
-                    <option value="">Selecione um novo responsável...</option>
-                    ${usuariosDisponiveis.map(usuario =>
-                `<option value="${usuario.ID}">${usuario.USUARIO}</option>`
-            ).join('')}
-                </select>
-            </div>
-            <div class="form-text">
-                É obrigatório selecionar um novo responsável para substituir o removido.
-            </div>`;
-            const confirmacao = await Swal.fire({
-                icon: 'warning',
-                title: 'Remover Responsável',
-                html: `
-                <div>
-                    <p>Tem certeza que deseja remover <strong>${userName}</strong> como responsável?</p>
-                    ${selectHtml}
-                </div>`,
-                showCancelButton: true,
-                confirmButtonText: 'Sim, substituir',
-                cancelButtonText: 'Cancelar',
-                confirmButtonColor: '#d33',
-                preConfirm: () => {
-                    const select = document.getElementById('novoResponsavelSelect');
-                    const novoResponsavelId = select.value;
-                    if (!novoResponsavelId) {
-                        Swal.showValidationMessage('Por favor, selecione um novo responsável');
-                        return false;
-                    }
-                    return {
-                        novoResponsavelId: novoResponsavelId,
-                        novoResponsavelNome: select.options[select.selectedIndex].text
-                    };
-                },
-                didOpen: () => {
-                    const selectElement = document.getElementById('novoResponsavelSelect');
-                    if (typeof $.fn.select2 !== 'undefined') {
-                        $(selectElement).select2({
-                            placeholder: "Selecione o novo responsável",
-                            allowClear: false,
-                            width: '100%',
-                            dropdownParent: $('.swal2-container')
-                        });
-                    }
-                }
-            });
-            if (!confirmacao.isConfirmed) {
-                return;
-            }
-            const { novoResponsavelId, novoResponsavelNome } = confirmacao.value;
-            const removeEndpoint = `/app/routers/workflow/WorkFlowRouter.php?action=removerResponsavel`;
-            const removeResponse = await fetch(removeEndpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({
-                    workflowId: workflowId,
-                    userId: userId,
-                    novoResponsavelId: novoResponsavelId
-                }),
-                credentials: 'include'
-            });
-            const removeResult = await removeResponse.json();
-            if (removeResult.status === 'success') {
-                let mensagem = removeResult.message;
-                if (removeResult.workflow_aprovado) {
-                    mensagem += '\n\nO workflow foi automaticamente aprovado pois todos os responsáveis restantes já haviam aprovado.';
-                }
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Sucesso!',
-                    html: `
-                    <p>${mensagem}</p>
-                    <p><strong>${userName}</strong> foi substituído por <strong>${novoResponsavelNome}</strong></p>`
-                }).then(() => {
-                    carregarDadosDoWorkflow();
-                });
-            } else {
-                throw new Error(removeResult.message || 'Erro ao remover responsável');
-            }
-        } catch (error) {
-            console.error('Erro ao remover responsável:', error);
-            Swal.fire({
-                icon: 'error',
-                title: 'Erro',
-                text: error.message || 'Não foi possível remover o responsável.'
-            });
+
+        const reviewButton = event.target.closest('.btn-review');
+        if (reviewButton) {
+            openReviewModal(reviewButton.dataset.revisionType, Number(reviewButton.dataset.etapaId));
+            return;
+        }
+
+        const removeButton = event.target.closest('.btn-remove-responsavel');
+        if (removeButton) {
+            handleRemoveResponsible(Number(removeButton.dataset.userId), removeButton.dataset.userName);
         }
     }
 
-    atualizarStatusWorkflow();
-    carregarDadosDoWorkflow();
-});
+    function getAttachmentIcon(type) {
+        if (!type) return 'fas fa-file';
+        if (type.includes('pdf')) return 'fas fa-file-pdf';
+        if (type.includes('image')) return 'fas fa-file-image';
+        if (type.includes('video')) return 'fas fa-file-video';
+        if (type.includes('audio')) return 'fas fa-file-audio';
+        if (type.includes('word')) return 'fas fa-file-word';
+        if (type.includes('excel') || type.includes('spreadsheet')) return 'fas fa-file-excel';
+        return 'fas fa-file';
+    }
+
+    function normalize(value) {
+        return String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toUpperCase();
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+})();

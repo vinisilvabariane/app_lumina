@@ -89,6 +89,12 @@ body {
     font-size: 2.1rem;
     line-height: 1;
     letter-spacing: -0.05em;
+    opacity: 0;
+    transform: translateY(14px);
+}
+
+.login-header h2.login-title-enter {
+    animation: loginTitleRise 0.7s ease forwards 0.1s;
 }
 
 .login-header p {
@@ -215,6 +221,13 @@ body {
 .toast {
     border-radius: 18px;
     box-shadow: 0 20px 38px rgba(12, 28, 60, 0.16);
+}
+
+@keyframes loginTitleRise {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 @media (max-width: 480px) {

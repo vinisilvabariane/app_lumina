@@ -1,612 +1,494 @@
-let selectedUsers = [];
-let currentFilter = 'todos';
-const MAX_FILES = 5;
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-let selectedFiles = [];
+(() => {
+    const MAX_FILES = 5;
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    const ROUTES = {
+        users: '/app/routers/workflow/WorkFlowRouter.php?action=carregarUsuarios',
+        workflows: '/app/routers/workflow/WorkFlowRouter.php?action=getWorkFlow',
+        statistics: '/app/routers/workflow/WorkFlowRouter.php?action=getEstatisticsWorkFlow',
+        create: '/app/routers/workflow/WorkFlowRouter.php?action=createWorkflow'
+    };
 
-async function carregarUsuarios() {
-    const endpoint = '/app/routers/workflow/WorkFlowRouter.php?action=carregarUsuarios';
+    const dom = {};
+    const state = {
+        currentFilter: 'todos',
+        users: [],
+        selectedUsers: [],
+        selectedFiles: [],
+        table: null
+    };
 
-    try {
-        const response = await fetch(endpoint, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            credentials: 'include'
+    function init() {
+        cacheDom();
+        bindEvents();
+        updateFileList();
+        updateSelectedUsers();
+        setMinimumDeadline();
+        dom.table.addEventListener('click', handleTableClick);
+        Promise.all([
+            loadUsers(),
+            loadStatistics(),
+            loadWorkflows(state.currentFilter)
+        ]).catch((error) => {
+            console.error('Erro na carga inicial:', error);
+        });
+    }
+
+    function cacheDom() {
+        dom.form = document.getElementById('newWorkflowForm');
+        dom.modal = document.getElementById('newWorkflowModal');
+        dom.title = document.getElementById('workflowTitulo');
+        dom.description = document.getElementById('workflowDescricao');
+        dom.priority = document.getElementById('workflowPrioridade');
+        dom.category = document.getElementById('workflowCategoria');
+        dom.deadline = document.getElementById('workflowPrazoFinal');
+        dom.usersSelect = document.getElementById('workflowResponsaveis');
+        dom.usersContainer = document.getElementById('selectedUsersContainer');
+        dom.selectedUsersIds = document.getElementById('selectedUsersIds');
+        dom.fileDropzone = document.getElementById('fileDropArea');
+        dom.fileInput = document.getElementById('fileInput');
+        dom.fileList = document.getElementById('fileList');
+        dom.stats = {
+            ativos: document.getElementById('ativosCount'),
+            andamento: document.getElementById('andamentoCount'),
+            aprovados: document.getElementById('aprovadosCount'),
+            rejeitados: document.getElementById('rejeitadosCount')
+        };
+        dom.filterButtons = {
+            todos: document.getElementById('btnTodos'),
+            meus: document.getElementById('btnMeus'),
+            participando: document.getElementById('btnParticipando')
+        };
+        dom.table = document.getElementById('workflowsTable');
+    }
+
+    function bindEvents() {
+        dom.form.addEventListener('submit', handleSubmit);
+        dom.modal.addEventListener('hidden.bs.modal', resetForm);
+        dom.usersContainer.addEventListener('click', handleUserRemoval);
+        dom.fileList.addEventListener('click', handleFileRemoval);
+
+        Object.entries(dom.filterButtons).forEach(([filter, button]) => {
+            button.addEventListener('click', () => {
+                setActiveFilter(filter);
+                loadWorkflows(filter);
+            });
         });
 
-        if (!response.ok) {
-            throw new Error(`Erro HTTP: ${response.status}`);
-        }
+        bindFileDropzone();
+    }
 
-        const result = await response.json();
+    function bindFileDropzone() {
+        dom.fileDropzone.addEventListener('click', () => dom.fileInput.click());
+
+        dom.fileInput.addEventListener('change', (event) => {
+            if (event.target.files?.length) {
+                addFiles(event.target.files);
+                dom.fileInput.value = '';
+            }
+        });
+
+        ['dragenter', 'dragover'].forEach((eventName) => {
+            dom.fileDropzone.addEventListener(eventName, (event) => {
+                event.preventDefault();
+                dom.fileDropzone.classList.add('is-dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach((eventName) => {
+            dom.fileDropzone.addEventListener(eventName, (event) => {
+                event.preventDefault();
+                dom.fileDropzone.classList.remove('is-dragover');
+            });
+        });
+
+        dom.fileDropzone.addEventListener('drop', (event) => {
+            if (event.dataTransfer.files?.length) {
+                addFiles(event.dataTransfer.files);
+            }
+        });
+    }
+
+    async function loadUsers() {
+        const result = await LuminaHttp.get(ROUTES.users);
         if (result.status !== 'success' || !Array.isArray(result.data)) {
-            throw new Error('Resposta invalida do servidor');
+            throw new Error('Resposta invalida ao carregar usuarios');
         }
 
-        const selectElement = document.getElementById('workflowResponsaveis');
-        if (!selectElement) {
-            throw new Error('Elemento workflowResponsaveis nao encontrado');
-        }
+        state.users = result.data;
+        renderUserOptions();
+    }
 
-        selectElement.innerHTML = '';
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = 'Selecione os usuarios';
-        selectElement.appendChild(defaultOption);
+    function renderUserOptions() {
+        dom.usersSelect.innerHTML = '';
 
-        result.data.forEach(usuario => {
+        state.users.forEach((user) => {
             const option = document.createElement('option');
-            option.value = usuario.ID;
-            option.textContent = `${usuario.USUARIO} - ${usuario.NOME}`;
-            option.setAttribute('data-nome', usuario.NOME);
-            selectElement.appendChild(option);
+            option.value = String(user.ID);
+            option.textContent = `${user.USUARIO} - ${user.NOME}`;
+            option.dataset.nome = user.NOME;
+            dom.usersSelect.appendChild(option);
         });
 
-        $(selectElement).select2({
+        if ($(dom.usersSelect).data('select2')) {
+            $(dom.usersSelect).select2('destroy');
+        }
+
+        $(dom.usersSelect).select2({
             placeholder: 'Selecione os usuarios',
             allowClear: true,
             width: '100%',
-            dropdownParent: $('#newWorkflowModal'),
-            templateResult: function (usuario) {
-                if (!usuario.id) return usuario.text;
-                return $('<span>' + usuario.text + '</span>');
-            }
+            dropdownParent: $('#newWorkflowModal')
         });
 
-        $(selectElement).off('select2:select').on('select2:select', function (e) {
-            const selectedUserId = e.params.data.id;
-            const selectedUserName = e.params.data.element.getAttribute('data-nome') || e.params.data.text.split(' - ')[0];
+        $(dom.usersSelect)
+            .off('select2:select')
+            .on('select2:select', (event) => {
+                const optionElement = event.params.data.element;
+                const userId = String(event.params.data.id);
+                const userName = optionElement?.dataset.nome || event.params.data.text;
 
-            if (!selectedUsers.some(user => user.id === selectedUserId)) {
-                selectedUsers.push({
-                    id: selectedUserId,
-                    name: selectedUserName
-                });
-                updateSelectedUsersContainer();
-            }
+                if (!state.selectedUsers.some((user) => user.id === userId)) {
+                    state.selectedUsers.push({ id: userId, name: userName });
+                    updateSelectedUsers();
+                }
 
-            $(selectElement).val(null).trigger('change');
-        });
-    } catch (error) {
-        console.error('Erro ao carregar usuarios:', error);
-        Swal.fire({
-            icon: 'error',
-            title: 'Erro ao carregar usuarios',
-            text: 'Nao foi possivel carregar a lista de usuarios. Por favor, tente novamente.',
-            footer: error.message
-        });
+                $(dom.usersSelect).val(null).trigger('change');
+            });
     }
-}
 
-async function carregarWorkFlows(filter = 'todos') {
-    currentFilter = filter;
-    const endpoint = `/app/routers/workflow/WorkFlowRouter.php?action=getWorkFlow&filter=${filter}`;
-
-    try {
-        const response = await fetch(endpoint, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            credentials: 'include'
-        });
-
-        if (!response.ok) {
-            throw new Error(`Erro HTTP: ${response.status}`);
-        }
-
-        const result = await response.json();
+    async function loadWorkflows(filter) {
+        state.currentFilter = filter;
+        const result = await LuminaHttp.get(`${ROUTES.workflows}&filter=${filter}`);
         if (result.status !== 'success' || !Array.isArray(result.data)) {
-            throw new Error('Resposta invalida do servidor');
+            throw new Error('Resposta invalida ao carregar workflows');
         }
 
-        inicializarDataTable(result.data);
-    } catch (error) {
-        console.error('Erro ao carregar workflows:', error);
-        Swal.fire({
-            icon: 'error',
-            title: 'Erro ao carregar workflows',
-            text: 'Nao foi possivel carregar a lista de workflows. Por favor, tente novamente.',
-            footer: error.message
-        });
-    }
-}
-
-function getPrioridadeBadge(workflow) {
-    const prioridadeValor = (workflow.prioridade || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase();
-
-    switch (prioridadeValor) {
-        case 'ALTA':
-            return '<span class="table-badge table-badge--danger">Alta</span>';
-        case 'MEDIA':
-            return '<span class="table-badge table-badge--warning">Media</span>';
-        case 'BAIXA':
-            return '<span class="table-badge table-badge--success">Baixa</span>';
-        default:
-            return `<span class="table-badge table-badge--neutral">${workflow.prioridade || 'N/D'}</span>`;
-    }
-}
-
-function getStatusBadge(workflow) {
-    switch (workflow.status) {
-        case 'APROVADO':
-            return '<span class="table-badge table-badge--success">Aprovado</span>';
-        case 'REJEITADO':
-            return '<span class="table-badge table-badge--danger">Rejeitado</span>';
-        case 'EM_ANDAMENTO':
-            return '<span class="table-badge table-badge--info">Andamento</span>';
-        default:
-            return `<span class="table-badge table-badge--neutral">${workflow.status || 'N/D'}</span>`;
-    }
-}
-
-function inicializarDataTable(data) {
-    if ($.fn.DataTable.isDataTable('#workflowsTable')) {
-        $('#workflowsTable').DataTable().destroy();
-        $('#workflowsTable tbody').empty();
+        renderTable(result.data);
     }
 
-    const formattedData = data.map(workflow => {
-        const dataCriacao = new Date(workflow.data_criacao);
-        const dataFormatada = dataCriacao.toLocaleDateString('pt-BR', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-        const descricao = workflow.descricao || '';
+    async function loadStatistics() {
+        const result = await LuminaHttp.get(ROUTES.statistics);
+        const stats = result.data || {};
+        updateStat(dom.stats.ativos, stats.ativos ?? 0);
+        updateStat(dom.stats.andamento, stats.andamento ?? 0);
+        updateStat(dom.stats.aprovados, stats.aprovados ?? 0);
+        updateStat(dom.stats.rejeitados, stats.rejeitados ?? 0);
+    }
 
-        return [
+    function updateStat(element, value) {
+        element.textContent = value;
+        element.classList.remove('stat-pulse');
+        void element.offsetWidth;
+        element.classList.add('stat-pulse');
+    }
+
+    function renderTable(workflows) {
+        const rows = workflows.map((workflow) => ([
             workflow.id,
-            workflow.titulo,
-            descricao.substring(0, 50) + (descricao.length > 50 ? '...' : ''),
-            getPrioridadeBadge(workflow),
-            workflow.categoria || 'N/D',
-            dataFormatada,
-            getStatusBadge(workflow),
-            `<button class="btn btn-sm btn-table-action btn-detalhes" onclick="visualizarWorkflow(${workflow.id})" data-workflow-id="${workflow.id}">
+            LuminaUI.escapeHtml(workflow.titulo),
+            LuminaUI.escapeHtml(truncate(workflow.descricao || '', 72)),
+            renderPriorityBadge(workflow.prioridade),
+            LuminaUI.escapeHtml(workflow.categoria || 'N/D'),
+            LuminaUI.formatDateTime(workflow.data_criacao),
+            renderStatusBadge(workflow.status),
+            `<button class="btn btn-sm btn-table-action btn-detalhes" data-workflow-id="${workflow.id}">
                 <i class="fas fa-eye"></i> Detalhes
             </button>`
-        ];
-    });
+        ]));
 
-    $('#workflowsTable').DataTable({
-        data: formattedData,
-        columns: [
-            { title: 'ID', visible: false },
-            { title: 'Titulo' },
-            { title: 'Descricao' },
-            { title: 'Prioridade' },
-            { title: 'Categoria' },
-            { title: 'Data de criacao' },
-            { title: 'Status' },
-            {
-                title: 'Acoes',
-                orderable: false,
-                className: 'text-center'
-            }
-        ],
-        language: {
-            url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/pt-BR.json'
-        },
-        dom: '<"top"f>rt<"bottom"lip><"clear">',
-        pageLength: 10,
-        responsive: true,
-        order: [[5, 'desc']],
-        autoWidth: false,
-        initComplete: function () {
-            $('.dataTables_filter input').addClass('form-control form-control-sm');
-            $('.dataTables_length select').addClass('form-control form-control-sm');
-        },
-        drawCallback: function () {
-            $('.paginate_button.current').addClass('btn-primary').removeClass('btn-outline-secondary');
+        if (state.table) {
+            state.table.destroy();
+            $('#workflowsTable tbody').empty();
         }
-    });
-}
 
-function visualizarWorkflow(id) {
-    window.location.href = `/app/views/workflow/detalhes/index.php?id=${id}`;
-}
+        state.table = $('#workflowsTable').DataTable({
+            data: rows,
+            columns: [
+                { title: 'ID', visible: false },
+                { title: 'Titulo' },
+                { title: 'Descricao' },
+                { title: 'Prioridade' },
+                { title: 'Categoria' },
+                { title: 'Data de criacao' },
+                { title: 'Status' },
+                { title: 'Acoes', orderable: false, className: 'text-center' }
+            ],
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/pt-BR.json' },
+            dom: '<"top"f>rt<"bottom"lip><"clear">',
+            pageLength: 10,
+            responsive: true,
+            autoWidth: false,
+            order: [[5, 'desc']]
+        });
 
-function loadWorkflowStatistics() {
-    axios.get('/app/routers/workflow/WorkFlowRouter.php?action=getEstatisticsWorkFlow')
-        .then(response => {
-            const stats = response.data.data;
-            document.getElementById('ativosCount').textContent = stats.ativos;
-            document.getElementById('andamentoCount').textContent = stats.andamento;
-            document.getElementById('aprovadosCount').textContent = stats.aprovados;
-            document.getElementById('rejeitadosCount').textContent = stats.rejeitados;
-            animateCountUpdate('ativosCount');
-            animateCountUpdate('andamentoCount');
-            animateCountUpdate('aprovadosCount');
-            animateCountUpdate('rejeitadosCount');
-        })
-        .catch(error => {
-            console.error('Erro ao carregar estatisticas:', error);
-            Swal.fire({
+    }
+
+    function handleTableClick(event) {
+        const button = event.target.closest('.btn-detalhes');
+        if (!button) {
+            return;
+        }
+
+        const workflowId = button.dataset.workflowId;
+        window.location.href = `/app/views/workflow/detalhes/index.php?id=${workflowId}`;
+    }
+
+    function renderPriorityBadge(value) {
+        const priority = normalize(value);
+        const map = {
+            ALTA: ['table-badge--danger', 'Alta'],
+            MEDIA: ['table-badge--warning', 'Media'],
+            BAIXA: ['table-badge--success', 'Baixa']
+        };
+        const [className, label] = map[priority] || ['table-badge--neutral', value || 'N/D'];
+        return `<span class="table-badge ${className}">${LuminaUI.escapeHtml(label)}</span>`;
+    }
+
+    function renderStatusBadge(value) {
+        const map = {
+            APROVADO: ['table-badge--success', 'Aprovado'],
+            REJEITADO: ['table-badge--danger', 'Rejeitado'],
+            EM_ANDAMENTO: ['table-badge--info', 'Andamento']
+        };
+        const [className, label] = map[value] || ['table-badge--neutral', value || 'N/D'];
+        return `<span class="table-badge ${className}">${LuminaUI.escapeHtml(label)}</span>`;
+    }
+
+    function updateSelectedUsers() {
+        if (!state.selectedUsers.length) {
+            dom.usersContainer.innerHTML = '<span>Nenhum usuario selecionado</span>';
+            dom.selectedUsersIds.value = '';
+            return;
+        }
+
+        dom.usersContainer.innerHTML = state.selectedUsers.map((user) => `
+            <div class="selected-user-chip">
+                <span>${LuminaUI.escapeHtml(user.name)}</span>
+                <button type="button" class="btn-close" aria-label="Remover usuario" data-user-id="${user.id}"></button>
+            </div>
+        `).join('');
+
+        dom.selectedUsersIds.value = state.selectedUsers.map((user) => user.id).join(',');
+    }
+
+    function handleUserRemoval(event) {
+        const button = event.target.closest('[data-user-id]');
+        if (!button) {
+            return;
+        }
+
+        state.selectedUsers = state.selectedUsers.filter((user) => user.id !== button.dataset.userId);
+        updateSelectedUsers();
+    }
+
+    function addFiles(fileList) {
+        const incomingFiles = Array.from(fileList);
+
+        if (state.selectedFiles.length + incomingFiles.length > MAX_FILES) {
+            LuminaUI.modalAlert({
                 icon: 'error',
-                title: 'Erro',
-                text: 'Nao foi possivel carregar as estatisticas dos workflows.',
-                timer: 3000,
-                showConfirmButton: false
+                title: 'Limite excedido',
+                text: `Voce pode enviar no maximo ${MAX_FILES} arquivos.`
             });
-        });
-}
-
-function animateCountUpdate(elementId) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-
-    element.style.transform = 'scale(1.2)';
-    element.style.transition = 'transform 0.3s ease';
-    setTimeout(() => {
-        element.style.transform = 'scale(1)';
-    }, 300);
-}
-
-async function sendFormData() {
-    const titulo = document.getElementById('workflowTitulo').value.trim();
-    const prioridade = document.getElementById('workflowPrioridade').value;
-    const prazo = document.getElementById('workflowPrazoFinal').value;
-
-    if (!prazo) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Campo obrigatorio',
-            text: 'Por favor, informe o prazo do workflow.',
-            footer: 'O campo "Prazo" e obrigatorio'
-        });
-        document.getElementById('workflowTitulo').focus();
-        return false;
-    }
-
-    if (!titulo) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Campo obrigatorio',
-            text: 'Por favor, informe o titulo do workflow.',
-            footer: 'O campo "Titulo" e obrigatorio'
-        });
-        document.getElementById('workflowTitulo').focus();
-        return false;
-    }
-
-    if (!prioridade) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Campo obrigatorio',
-            text: 'Por favor, selecione a prioridade do workflow.',
-            footer: 'O campo "Prioridade" e obrigatorio'
-        });
-        document.getElementById('workflowPrioridade').focus();
-        return false;
-    }
-
-    if (selectedUsers.length === 0) {
-        const result = await Swal.fire({
-            icon: 'question',
-            title: 'Nenhum responsavel selecionado',
-            text: 'Deseja continuar sem atribuir responsaveis?',
-            showCancelButton: true,
-            confirmButtonText: 'Continuar',
-            cancelButtonText: 'Cancelar'
-        });
-
-        if (!result.isConfirmed) {
-            return false;
-        }
-    }
-
-    const formData = new FormData();
-    formData.append('titulo', titulo);
-    formData.append('descricao', document.getElementById('workflowDescricao').value.trim());
-    formData.append('prioridade', prioridade);
-    formData.append('categoria', document.getElementById('workflowCategoria').value || '');
-    formData.append('responsaveis', document.getElementById('selectedUsersIds').value);
-    formData.append('prazo_final', prazo);
-
-    selectedFiles.forEach((file, index) => {
-        formData.append(`anexos[${index}]`, file);
-    });
-
-    const loadingSwal = Swal.fire({
-        title: 'Enviando workflow...',
-        html: 'Por favor, aguarde enquanto processamos seu workflow.',
-        allowOutsideClick: false,
-        didOpen: () => {
-            Swal.showLoading();
-        }
-    });
-
-    try {
-        const response = await fetch('/app/routers/workflow/WorkFlowRouter.php?action=createWorkflow', {
-            method: 'POST',
-            body: formData,
-            credentials: 'include'
-        });
-
-        const result = await response.json();
-        await loadingSwal.close();
-
-        if (!response.ok) {
-            throw new Error(result.message || 'Erro ao enviar formulario');
+            return;
         }
 
-        if (result.status === 'success') {
-            const workflowId = result.data.id || result.data.workflow_id;
-            const swalResult = await Swal.fire({
+        incomingFiles.forEach((file) => {
+            if (file.size > MAX_FILE_SIZE) {
+                LuminaUI.modalAlert({
+                    icon: 'warning',
+                    title: 'Arquivo muito grande',
+                    html: `O arquivo <strong>${LuminaUI.escapeHtml(file.name)}</strong> excede 10 MB.`
+                });
+                return;
+            }
+
+            const duplicate = state.selectedFiles.some((current) =>
+                current.name === file.name &&
+                current.size === file.size &&
+                current.lastModified === file.lastModified
+            );
+
+            if (!duplicate) {
+                state.selectedFiles.push(file);
+            }
+        });
+
+        updateFileList();
+    }
+
+    function updateFileList() {
+        if (!state.selectedFiles.length) {
+            dom.fileList.innerHTML = '<div class="file-list-empty">Nenhum arquivo selecionado</div>';
+            return;
+        }
+
+        dom.fileList.innerHTML = `
+            ${state.selectedFiles.map((file, index) => `
+                <div class="file-list-item">
+                    <div class="file-list-item__meta">
+                        <span class="file-list-item__icon">
+                            <i class="fas ${getFileIcon(file.type)}"></i>
+                        </span>
+                        <div>
+                            <div class="file-list-item__name">${LuminaUI.escapeHtml(file.name)}</div>
+                            <small class="file-list-item__size">${LuminaUI.formatBytes(file.size)}</small>
+                        </div>
+                    </div>
+                    <button type="button" class="file-remove-btn" data-file-index="${index}" aria-label="Remover arquivo">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `).join('')}
+            <div class="file-list-counter mt-2">${state.selectedFiles.length} de ${MAX_FILES} arquivos selecionados</div>
+        `;
+    }
+
+    function handleFileRemoval(event) {
+        const button = event.target.closest('[data-file-index]');
+        if (!button) {
+            return;
+        }
+
+        const index = Number(button.dataset.fileIndex);
+        state.selectedFiles.splice(index, 1);
+        updateFileList();
+    }
+
+    async function handleSubmit(event) {
+        event.preventDefault();
+
+        if (!(await validateForm())) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('titulo', dom.title.value.trim());
+        formData.append('descricao', dom.description.value.trim());
+        formData.append('prioridade', dom.priority.value);
+        formData.append('categoria', dom.category.value || '');
+        formData.append('responsaveis', dom.selectedUsersIds.value);
+        formData.append('prazo_final', dom.deadline.value);
+        state.selectedFiles.forEach((file, index) => formData.append(`anexos[${index}]`, file));
+
+        const loader = LuminaUI.loading('Enviando workflow...', 'Validando e registrando os dados.');
+
+        try {
+            const result = await LuminaHttp.postForm(ROUTES.create, formData);
+            loader.close();
+
+            const modal = bootstrap.Modal.getInstance(dom.modal);
+            modal?.hide();
+            resetForm();
+            await Promise.all([loadWorkflows(state.currentFilter), loadStatistics()]);
+
+            const workflowId = result.data?.workflow_id || result.data?.id;
+            const confirmation = await LuminaUI.confirm({
                 icon: 'success',
-                title: 'Workflow criado!',
+                title: 'Workflow criado',
                 text: 'O workflow foi registrado com sucesso.',
-                showConfirmButton: true,
-                confirmButtonText: 'Ver detalhes',
                 showCancelButton: true,
+                confirmButtonText: 'Ver detalhes',
                 cancelButtonText: 'Fechar'
             });
 
-            const modal = bootstrap.Modal.getInstance(document.getElementById('newWorkflowModal'));
-            if (modal) {
-                modal.hide();
-            }
-
-            resetWorkflowForm();
-            carregarWorkFlows(currentFilter);
-            loadWorkflowStatistics();
-
-            if (swalResult.isConfirmed && workflowId) {
+            if (confirmation.isConfirmed && workflowId) {
                 window.location.href = `/app/views/workflow/detalhes/index.php?id=${workflowId}`;
             }
-        } else {
-            throw new Error(result.message || 'Erro ao processar o workflow');
-        }
-    } catch (error) {
-        await loadingSwal.close();
-        console.error('Erro:', error);
-        Swal.fire({
-            icon: 'error',
-            title: 'Erro ao criar workflow',
-            text: error.message,
-            footer: 'Por favor, tente novamente.'
-        });
-    }
-}
-
-function resetWorkflowForm() {
-    document.getElementById('newWorkflowForm').reset();
-    selectedUsers = [];
-    selectedFiles = [];
-    updateSelectedUsersContainer();
-    updateFileList();
-
-    const selectElement = document.getElementById('workflowResponsaveis');
-    if (selectElement && $(selectElement).data('select2')) {
-        $(selectElement).val(null).trigger('change');
-    }
-
-    const formElements = document.getElementById('newWorkflowForm').elements;
-    for (const element of formElements) {
-        element.classList.remove('is-invalid');
-    }
-}
-
-function updateSelectedUsersContainer() {
-    const container = document.getElementById('selectedUsersContainer');
-    const hiddenInput = document.getElementById('selectedUsersIds');
-    if (!container || !hiddenInput) return;
-
-    container.innerHTML = '';
-    if (selectedUsers.length === 0) {
-        container.innerHTML = '<span class="text-muted">Nenhum usuario selecionado</span>';
-        hiddenInput.value = '';
-        return;
-    }
-
-    selectedUsers.forEach(user => {
-        const userCard = document.createElement('div');
-        userCard.className = 'selected-user-chip';
-        userCard.innerHTML = `
-            <span>${user.name}</span>
-            <button type="button" class="btn-close btn-close-sm" data-user-id="${user.id}" aria-label="Remover usuario"></button>`;
-        container.appendChild(userCard);
-    });
-
-    hiddenInput.value = selectedUsers.map(user => user.id).join(',');
-    container.querySelectorAll('.btn-close').forEach(btn => {
-        btn.addEventListener('click', function () {
-            const userId = this.getAttribute('data-user-id');
-            selectedUsers = selectedUsers.filter(user => user.id !== userId);
-            updateSelectedUsersContainer();
-        });
-    });
-}
-
-function handleFileUpload(files) {
-    if (selectedFiles.length + files.length > MAX_FILES) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Limite excedido',
-            text: `Voce pode enviar no maximo ${MAX_FILES} arquivos.`,
-            footer: `Arquivos selecionados: ${selectedFiles.length} | Tentando adicionar: ${files.length}`
-        });
-        return;
-    }
-
-    Array.from(files).forEach(file => {
-        if (file.size > MAX_FILE_SIZE) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Arquivo muito grande',
-                html: `O arquivo <strong>${file.name}</strong> excede o tamanho maximo de 10MB.<br>Tamanho: ${(file.size / (1024 * 1024)).toFixed(2)}MB`,
-                footer: 'Este arquivo nao sera adicionado.'
-            });
-            return;
-        }
-
-        if (selectedFiles.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified)) {
-            Swal.fire({
-                icon: 'info',
-                title: 'Arquivo duplicado',
-                html: `O arquivo <strong>${file.name}</strong> ja foi selecionado.`,
-                footer: 'Este arquivo nao sera adicionado novamente.'
-            });
-            return;
-        }
-
-        selectedFiles.push(file);
-    });
-
-    updateFileList();
-}
-
-function updateFileList() {
-    const fileListElement = document.getElementById('fileList');
-    if (!fileListElement) return;
-
-    fileListElement.innerHTML = '';
-    if (selectedFiles.length === 0) {
-        fileListElement.innerHTML = '<div class="file-list-empty">Nenhum arquivo selecionado</div>';
-        return;
-    }
-
-    selectedFiles.forEach((file, index) => {
-        const fileItem = document.createElement('div');
-        fileItem.className = 'file-list-item';
-        let iconClass = 'fa-file';
-
-        if (file.type.startsWith('image/')) iconClass = 'fa-file-image';
-        else if (file.type.startsWith('video/')) iconClass = 'fa-file-video';
-        else if (file.type.startsWith('audio/')) iconClass = 'fa-file-audio';
-        else if (file.type === 'application/pdf') iconClass = 'fa-file-pdf';
-        else if (file.type.includes('spreadsheet')) iconClass = 'fa-file-excel';
-        else if (file.type.includes('word')) iconClass = 'fa-file-word';
-
-        fileItem.innerHTML = `
-            <div class="file-list-item__meta">
-                <span class="file-list-item__icon">
-                    <i class="fas ${iconClass}"></i>
-                </span>
-                <div>
-                    <div class="file-list-item__name">${file.name}</div>
-                    <small class="file-list-item__size">${(file.size / 1024).toFixed(2)} KB</small>
-                </div>
-            </div>
-            <button type="button" class="file-remove-btn" data-file-index="${index}" aria-label="Remover arquivo">
-                <i class="fas fa-times"></i>
-            </button>
-        `;
-        fileListElement.appendChild(fileItem);
-    });
-
-    const counter = document.createElement('div');
-    counter.className = 'file-list-counter mt-2';
-    counter.textContent = `${selectedFiles.length} de ${MAX_FILES} arquivos selecionados`;
-    fileListElement.appendChild(counter);
-
-    fileListElement.querySelectorAll('button').forEach(btn => {
-        btn.addEventListener('click', function () {
-            const index = parseInt(this.getAttribute('data-file-index'), 10);
-            selectedFiles.splice(index, 1);
-            updateFileList();
-        });
-    });
-}
-
-function setActiveFilterButton(activeId) {
-    ['btnTodos', 'btnMeus', 'btnParticipando'].forEach(id => {
-        const button = document.getElementById(id);
-        if (button) {
-            button.classList.toggle('active', id === activeId);
-        }
-    });
-}
-
-function configurarEventos() {
-    document.getElementById('newWorkflowForm').addEventListener('submit', function (e) {
-        e.preventDefault();
-        sendFormData();
-    });
-
-    document.getElementById('newWorkflowModal').addEventListener('hidden.bs.modal', function () {
-        resetWorkflowForm();
-    });
-
-    document.getElementById('workflowPrazoFinal').addEventListener('change', function () {
-        const dataSelecionada = new Date(this.value);
-        const dataAtual = new Date();
-        dataAtual.setHours(0, 0, 0, 0);
-
-        if (dataSelecionada < dataAtual) {
-            Swal.fire({
+        } catch (error) {
+            loader.close();
+            LuminaUI.modalAlert({
                 icon: 'error',
-                title: 'Data invalida',
-                text: 'A data do prazo final nao pode ser menor que a data atual!',
-                confirmButtonText: 'Entendi',
-                confirmButtonColor: '#dc3545',
-                timer: 5000,
-                timerProgressBar: true
+                title: 'Erro ao criar workflow',
+                text: error.message
             });
-            this.value = '';
-            this.focus();
         }
-    });
+    }
 
-    document.getElementById('btnTodos').addEventListener('click', function () {
-        setActiveFilterButton('btnTodos');
-        carregarWorkFlows('todos');
-    });
+    async function validateForm() {
+        const title = dom.title.value.trim();
+        const deadline = dom.deadline.value;
+        const priority = dom.priority.value;
 
-    document.getElementById('btnMeus').addEventListener('click', function () {
-        setActiveFilterButton('btnMeus');
-        carregarWorkFlows('meus');
-    });
+        if (!deadline) {
+            dom.deadline.focus();
+            await LuminaUI.modalAlert({ icon: 'error', title: 'Campo obrigatorio', text: 'Informe o prazo final do workflow.' });
+            return false;
+        }
 
-    document.getElementById('btnParticipando').addEventListener('click', function () {
-        setActiveFilterButton('btnParticipando');
-        carregarWorkFlows('participando');
-    });
+        if (!title) {
+            dom.title.focus();
+            await LuminaUI.modalAlert({ icon: 'error', title: 'Campo obrigatorio', text: 'Informe o titulo do workflow.' });
+            return false;
+        }
 
-    const fileDropArea = document.getElementById('fileDropArea');
-    const fileInput = document.getElementById('fileInput');
-    if (fileDropArea && fileInput) {
-        fileDropArea.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', e => {
-            if (e.target.files.length > 0) {
-                handleFileUpload(e.target.files);
-                fileInput.value = '';
-            }
-        });
+        if (!priority) {
+            dom.priority.focus();
+            await LuminaUI.modalAlert({ icon: 'error', title: 'Campo obrigatorio', text: 'Selecione a prioridade do workflow.' });
+            return false;
+        }
 
-        fileDropArea.addEventListener('dragover', e => {
-            e.preventDefault();
-            fileDropArea.classList.add('is-dragover');
-        });
+        if (!state.selectedUsers.length) {
+            const confirmation = await LuminaUI.confirm({
+                icon: 'question',
+                title: 'Nenhum responsavel selecionado',
+                text: 'Deseja continuar sem atribuir responsaveis?',
+                showCancelButton: true,
+                confirmButtonText: 'Continuar',
+                cancelButtonText: 'Cancelar'
+            });
 
-        fileDropArea.addEventListener('dragleave', () => {
-            fileDropArea.classList.remove('is-dragover');
-        });
+            return confirmation.isConfirmed;
+        }
 
-        fileDropArea.addEventListener('drop', e => {
-            e.preventDefault();
-            fileDropArea.classList.remove('is-dragover');
-            if (e.dataTransfer.files.length > 0) {
-                handleFileUpload(e.dataTransfer.files);
-            }
+        return true;
+    }
+
+    function resetForm() {
+        dom.form.reset();
+        state.selectedUsers = [];
+        state.selectedFiles = [];
+        updateSelectedUsers();
+        updateFileList();
+
+        if ($(dom.usersSelect).data('select2')) {
+            $(dom.usersSelect).val(null).trigger('change');
+        }
+    }
+
+    function setActiveFilter(filter) {
+        Object.entries(dom.filterButtons).forEach(([key, button]) => {
+            button.classList.toggle('active', key === filter);
         });
     }
-}
 
-document.addEventListener('DOMContentLoaded', function () {
-    configurarEventos();
-    carregarUsuarios();
-    loadWorkflowStatistics();
-    updateFileList();
-    carregarWorkFlows('todos');
-});
+    function setMinimumDeadline() {
+        const today = new Date();
+        const value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        dom.deadline.min = value;
+    }
+
+    function getFileIcon(type) {
+        if (!type) return 'fa-file';
+        if (type.startsWith('image/')) return 'fa-file-image';
+        if (type === 'application/pdf') return 'fa-file-pdf';
+        if (type.startsWith('video/')) return 'fa-file-video';
+        if (type.startsWith('audio/')) return 'fa-file-audio';
+        if (type.includes('spreadsheet') || type.includes('excel')) return 'fa-file-excel';
+        if (type.includes('word')) return 'fa-file-word';
+        return 'fa-file';
+    }
+
+    function normalize(value) {
+        return String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toUpperCase();
+    }
+
+    function truncate(value, maxLength) {
+        return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+})();

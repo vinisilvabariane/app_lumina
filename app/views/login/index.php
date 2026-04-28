@@ -90,6 +90,8 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/app/src/js/shared/http.js"></script>
+    <script src="/app/src/js/shared/ui.js"></script>
     <script src="/app/src/js/login/login.js"></script>
 </body>
 

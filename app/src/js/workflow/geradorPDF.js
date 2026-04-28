@@ -1,104 +1,94 @@
 function gerarRelatorioPDF() {
-    const jsPDF = window.jsPDF || window.jspdf.jsPDF;
+    const jsPDF = window.jsPDF || window.jspdf?.jsPDF;
 
     if (typeof jsPDF === 'undefined') {
-        console.error('Biblioteca jsPDF não carregada');
         Swal.fire({
             icon: 'error',
             title: 'Erro',
-            text: 'Biblioteca jsPDF necessária não foi carregada.'
+            text: 'Biblioteca jsPDF necessaria nao foi carregada.'
         });
         return;
     }
+
     const doc = new jsPDF('p', 'mm', 'a4');
     Swal.fire({
-        title: 'Gerando Relatório...',
-        text: 'Preparando documento técnico...',
+        title: 'Gerando relatorio...',
+        text: 'Preparando documento tecnico...',
         allowOutsideClick: false,
-        didOpen: () => {
-            Swal.showLoading();
-        }
+        didOpen: () => Swal.showLoading()
     });
+
     coletarDadosCompletos(doc);
 }
 
 async function coletarDadosCompletos(doc) {
     try {
+        const pageState = window.LuminaWorkflowPage?.getState?.() || {};
+        const workflow = pageState.workflow || {};
+        const timeline = Array.isArray(pageState.timeline) ? pageState.timeline : [];
+
         const workflowData = {
-            titulo: document.getElementById('workflowTitulo')?.textContent || 'Não informado',
-            descricao: document.getElementById('workflowDescricao')?.textContent || 'Não informado',
-            prioridade: document.getElementById('workflowPrioridade')?.textContent?.replace(/\s+/g, ' ').trim() || 'Não informado',
-            categoria: document.getElementById('workflowCategoria')?.textContent?.replace(/\s+/g, ' ').trim() || 'Não informado',
-            status: document.getElementById('workflowStatus')?.textContent?.replace(/\s+/g, ' ').trim() || 'Não informado',
-            criador: document.getElementById('workflowCriador')?.textContent || 'Não informado',
-            dataCriacao: document.getElementById('workflowDataCriacao')?.textContent || 'Não informado',
-            prazoFinal: document.getElementById('prazoFinal')?.textContent || 'Não informado',
+            titulo: document.getElementById('workflowTitulo')?.textContent || 'Nao informado',
+            descricao: document.getElementById('workflowDescricao')?.textContent || 'Nao informado',
+            prioridade: document.getElementById('workflowPrioridade')?.textContent?.replace(/\s+/g, ' ').trim() || 'Nao informado',
+            categoria: document.getElementById('workflowCategoria')?.textContent?.replace(/\s+/g, ' ').trim() || 'Nao informado',
+            status: document.getElementById('workflowStatus')?.textContent?.replace(/\s+/g, ' ').trim() || 'Nao informado',
+            criador: document.getElementById('workflowCriador')?.textContent || 'Nao informado',
+            dataCriacao: document.getElementById('workflowDataCriacao')?.textContent || 'Nao informado',
+            prazoFinal: document.getElementById('prazoFinal')?.textContent || 'Nao informado',
             id: WORKFLOW_ID || 'N/A'
         };
-        const responsaveis = [];
-        document.querySelectorAll('#responsaveisContainer .card').forEach(card => {
-            const nome = card.querySelector('.card-title')?.textContent?.trim();
-            const login = card.querySelector('.card-text')?.textContent?.trim();
-            if (nome && nome !== 'Carregando...') {
-                responsaveis.push({ nome, login: login || 'Não informado' });
-            }
-        });
-        const anexos = [];
-        document.querySelectorAll('#anexosContainer .card').forEach(card => {
-            const nome = card.querySelector('.card-title')?.textContent?.trim();
-            const tamanho = card.querySelector('.small div:first-child')?.textContent?.replace('•', '').trim();
-            const data = card.querySelector('.small div:last-child')?.textContent?.replace('•', '').trim();
-            if (nome && nome !== 'Carregando...') {
-                anexos.push({ nome, tamanho: tamanho || 'Não informado', data: data || 'Não informado' });
-            }
-        });
-        const historicoCompleto = await coletarHistoricoComChats();
+
+        const responsaveis = (workflow.responsaveis || []).map((responsavel) => ({
+            nome: responsavel.nome_usuario || 'Usuario',
+            login: responsavel.usuario_login ? `@${responsavel.usuario_login}` : 'Nao informado'
+        }));
+
+        const anexos = (workflow.anexos || []).map((anexo) => ({
+            nome: anexo.nome_arquivo || 'Arquivo',
+            tamanho: formatarTamanhoArquivo(anexo.tamanho),
+            data: formatarDataHoraPDF(anexo.data_upload)
+        }));
+
+        const historicoCompleto = await coletarHistoricoComChats(timeline);
         await gerarPDFComEspacamentoAjustado(doc, workflowData, responsaveis, anexos, historicoCompleto);
+
         Swal.close();
+
         const fileName = `Relatorio_Workflow_${workflowData.titulo.substring(0, 30).replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
         doc.save(fileName);
-
     } catch (error) {
         console.error('Erro ao gerar PDF:', error);
         Swal.close();
         Swal.fire({
             icon: 'error',
             title: 'Erro ao gerar PDF',
-            text: 'Ocorreu um erro durante a geração do relatório: ' + error.message
+            text: `Ocorreu um erro durante a geracao do relatorio: ${error.message}`
         });
     }
 }
 
-async function coletarHistoricoComChats() {
+async function coletarHistoricoComChats(etapas) {
     const historico = [];
-    const etapas = document.querySelectorAll('#timeline-items .d-flex.mb-4');
-    for (const item of etapas) {
-        const titulo = item.querySelector('h6')?.textContent?.trim();
-        const data = item.querySelector('small.text-muted')?.textContent?.trim();
-        const descricao = item.querySelector('p.mb-1')?.textContent?.trim();
-        const usuario = item.querySelector('small.text-muted .fa-user')?.parentNode?.textContent?.trim();
-        const botaoJustificativa = item.querySelector('.btn-ver-justificativa');
-        const justificativa = botaoJustificativa ? botaoJustificativa.getAttribute('data-justificativa') : null;
-        const botaoChat = item.querySelector('.btn-chat-reprovacao');
+
+    for (const etapa of etapas) {
         let chatMessages = [];
-        if (botaoChat) {
-            const etapaId = botaoChat.getAttribute('data-etapa-id');
-            if (etapaId) {
-                chatMessages = await carregarMensagensChat(etapaId);
-            }
+
+        if (etapa.tipo_acao === 'REPROVACAO' && etapa.id) {
+            chatMessages = await carregarMensagensChat(etapa.id);
         }
-        if (titulo && data && titulo !== 'Carregando...') {
-            historico.push({
-                titulo,
-                data,
-                descricao: descricao || '',
-                usuario: usuario || 'Não identificado',
-                justificativa: justificativa || '',
-                chatMessages,
-                tipo: botaoChat ? 'REPROVACAO' : 'OUTRO'
-            });
-        }
+
+        historico.push({
+            titulo: etapa.tipo_acao || 'Etapa',
+            data: formatarDataHoraPDF(etapa.data_hora || new Date().toISOString()),
+            descricao: etapa.descricao || '',
+            usuario: etapa.usuario_nome || 'Nao identificado',
+            justificativa: etapa.justificativa || '',
+            chatMessages,
+            tipo: etapa.tipo_acao === 'REPROVACAO' ? 'REPROVACAO' : 'OUTRO'
+        });
     }
+
     return historico;
 }
 
@@ -110,7 +100,11 @@ async function carregarMensagensChat(etapaId) {
             headers: { 'X-Requested-With': 'XMLHttpRequest' },
             credentials: 'include'
         });
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const result = await response.json();
         return result.status === 'success' ? result.data || [] : [];
     } catch (error) {
@@ -126,20 +120,23 @@ async function gerarPDFComEspacamentoAjustado(doc, workflowData, responsaveis, a
     const footerHeight = 25;
     let y = margin;
     const styles = {
-        title: { size: 16, style: 'bold' },
-        subtitle: { size: 14, style: 'bold' },
-        section: { size: 12, style: 'bold' },
-        normal: { size: 10, style: 'normal' },
-        small: { size: 9, style: 'normal' },
-        tiny: { size: 8, style: 'normal' }
+        title: { size: 16 },
+        section: { size: 12 },
+        normal: { size: 10 },
+        small: { size: 9 },
+        tiny: { size: 8 }
     };
 
-    function addTextWithSpacing(text, x, y, maxWidth, fontSize = styles.normal.size, style = 'normal', lineHeight = 6) {
-        if (!text) return { height: 0, lines: [] };
+    function addTextWithSpacing(text, x, positionY, maxWidth, fontSize = styles.normal.size, style = 'normal', lineHeight = 6) {
+        if (!text) {
+            return { height: 0, lines: [] };
+        }
+
         doc.setFontSize(fontSize);
         doc.setFont(undefined, style);
-        const lines = doc.splitTextToSize(text.toString(), maxWidth);
-        doc.text(lines, x, y);
+        const lines = doc.splitTextToSize(String(text), maxWidth);
+        doc.text(lines, x, positionY);
+
         return { height: lines.length * lineHeight, lines };
     }
 
@@ -154,14 +151,16 @@ async function gerarPDFComEspacamentoAjustado(doc, workflowData, responsaveis, a
     }
 
     function addSection(title) {
-        if (!checkSpace(30)) newPage();
+        if (!checkSpace(30)) {
+            newPage();
+        }
+
         doc.setFillColor(41, 128, 185);
         doc.rect(margin, y, contentWidth, 8, 'F');
         doc.setFontSize(styles.section.size);
         doc.setFont(undefined, 'bold');
         doc.setTextColor(255, 255, 255);
         doc.text(title, margin + 5, y + 5.5);
-
         y += 12;
         doc.setTextColor(0, 0, 0);
     }
@@ -171,276 +170,225 @@ async function gerarPDFComEspacamentoAjustado(doc, workflowData, responsaveis, a
     doc.setFontSize(styles.title.size);
     doc.setFont(undefined, 'bold');
     doc.setTextColor(255, 255, 255);
-    doc.text('RELATÓRIO TÉCNICO - WORKFLOW', margin, 15);
+    doc.text('RELATORIO TECNICO - WORKFLOW', margin, 15);
     doc.setFontSize(styles.small.size);
     doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, margin, 22);
     y = 35;
 
-    addSection('INFORMAÇÕES GERAIS DO WORKFLOW');
+    addSection('INFORMACOES GERAIS DO WORKFLOW');
 
-    const infoData = [
-        ['Título:', workflowData.titulo],
-        ['Descrição:', workflowData.descricao],
+    [
+        ['Titulo:', workflowData.titulo],
+        ['Descricao:', workflowData.descricao],
         ['Status:', workflowData.status],
         ['Prioridade:', workflowData.prioridade],
         ['Categoria:', workflowData.categoria],
         ['Criado por:', workflowData.criador],
-        ['Data de Criação:', workflowData.dataCriacao],
-        ['Prazo Final:', workflowData.prazoFinal],
-        ['ID do Workflow:', workflowData.id]
-    ];
-
-    infoData.forEach(([label, value]) => {
+        ['Data de criacao:', workflowData.dataCriacao],
+        ['Prazo final:', workflowData.prazoFinal],
+        ['ID do workflow:', workflowData.id]
+    ].forEach(([label, value]) => {
         if (!checkSpace(15)) {
             newPage();
-            addSection('INFORMAÇÕES GERAIS DO WORKFLOW (Continuação)');
+            addSection('INFORMACOES GERAIS DO WORKFLOW (CONTINUACAO)');
         }
 
-        // Label
         doc.setFontSize(styles.normal.size);
         doc.setFont(undefined, 'bold');
         doc.text(label, margin, y);
-
-        // Value com cálculo de altura correto
         doc.setFont(undefined, 'normal');
-        const valueResult = addTextWithSpacing(value, margin + 45, y, contentWidth - 50, styles.normal.size, 'normal', 5);
-
-        // Avançar Y baseado na maior altura
-        const lineHeight = Math.max(6, valueResult.height);
-        y += lineHeight + 4;
+        const result = addTextWithSpacing(value, margin + 45, y, contentWidth - 50, styles.normal.size, 'normal', 5);
+        y += Math.max(6, result.height) + 4;
     });
 
-    y += 12; // Aumentado de 10 para 12
+    y += 12;
+    addSection('RESPONSAVEIS');
 
-    // ========== RESPONSÁVEIS ==========
-    if (!checkSpace(40)) newPage();
-    addSection('RESPONSÁVEIS');
-
-    if (responsaveis.length > 0) {
-        responsaveis.forEach((resp, index) => {
+    if (responsaveis.length) {
+        responsaveis.forEach((responsavel, index) => {
             if (!checkSpace(20)) {
                 newPage();
-                addSection('RESPONSÁVEIS (Continuação)');
+                addSection('RESPONSAVEIS (CONTINUACAO)');
             }
 
             doc.setFontSize(styles.normal.size);
             doc.setFont(undefined, 'bold');
-            doc.text(`${index + 1}. ${resp.nome}`, margin, y);
-
+            doc.text(`${index + 1}. ${responsavel.nome}`, margin, y);
             doc.setFontSize(styles.small.size);
             doc.setFont(undefined, 'normal');
-            doc.text(`Login: ${resp.login}`, margin + 10, y + 6);
-
-            y += 18; // Aumentado de 16 para 18
+            doc.text(`Login: ${responsavel.login}`, margin + 10, y + 6);
+            y += 18;
         });
     } else {
         doc.setFontSize(styles.normal.size);
-        doc.text('Nenhum responsável atribuído', margin, y);
-        y += 14; // Aumentado de 12 para 14
+        doc.text('Nenhum responsavel atribuido', margin, y);
+        y += 14;
     }
 
-    y += 12; // Aumentado de 10 para 12
-
-    // ========== ANEXOS ==========
-    if (!checkSpace(40)) newPage();
+    y += 12;
     addSection('DOCUMENTOS ANEXOS');
 
-    if (anexos.length > 0) {
+    if (anexos.length) {
         anexos.forEach((anexo, index) => {
             if (!checkSpace(25)) {
                 newPage();
-                addSection('DOCUMENTOS ANEXOS (Continuação)');
+                addSection('DOCUMENTOS ANEXOS (CONTINUACAO)');
             }
 
             doc.setFontSize(styles.normal.size);
             doc.setFont(undefined, 'bold');
             doc.text(`${index + 1}. ${anexo.nome}`, margin, y);
-
             doc.setFontSize(styles.small.size);
             doc.setFont(undefined, 'normal');
             doc.text(`Tamanho: ${anexo.tamanho}`, margin + 10, y + 6);
             doc.text(`Data: ${anexo.data}`, margin + 10, y + 12);
-
-            y += 24; // Aumentado de 22 para 24
+            y += 24;
         });
     } else {
         doc.setFontSize(styles.normal.size);
         doc.text('Nenhum documento anexado', margin, y);
-        y += 14; // Aumentado de 12 para 14
+        y += 14;
     }
 
-    y += 12; // Aumentado de 10 para 12
+    y += 12;
+    addSection('HISTORICO DE ATIVIDADES');
 
-    // ========== HISTÓRICO DE ATIVIDADES ==========
-    if (!checkSpace(50)) newPage();
-    addSection('HISTÓRICO DE ATIVIDADES');
-
-    if (historico.length > 0) {
+    if (historico.length) {
         historico.forEach((item, index) => {
-            // Verificar espaço ANTES de começar a atividade
             const estimatedHeight = calcularAlturaAtividade(item, doc, contentWidth);
             if (!checkSpace(estimatedHeight)) {
                 newPage();
-                addSection('HISTÓRICO DE ATIVIDADES (Continuação)');
+                addSection('HISTORICO DE ATIVIDADES (CONTINUACAO)');
             }
 
-            const startY = y;
-
-            // Cabeçalho da atividade - MAIS ESPAÇO
             doc.setFillColor(245, 245, 245);
-            doc.rect(margin, y, contentWidth, 14, 'F'); // Aumentado de 12 para 14
+            doc.rect(margin, y, contentWidth, 14, 'F');
             doc.setDrawColor(200, 200, 200);
             doc.rect(margin, y, contentWidth, 14);
-
             doc.setFontSize(styles.normal.size);
             doc.setFont(undefined, 'bold');
-            doc.text(`ATIVIDADE ${index + 1}: ${item.titulo}`, margin + 5, y + 9); // Ajustado para centro
-            y += 18; // Aumentado de 15 para 18 - MAIS ESPAÇO APÓS TÍTULO
+            doc.text(`ATIVIDADE ${index + 1}: ${item.titulo}`, margin + 5, y + 9);
+            y += 18;
 
-            // Informações básicas - MAIS ESPAÇO
             doc.setFontSize(styles.small.size);
             doc.setFont(undefined, 'normal');
             doc.text(`Data/Hora: ${item.data}`, margin, y);
-            doc.text(`Responsável: ${item.usuario}`, margin + contentWidth / 2, y);
-            y += 12; // Aumentado de 10 para 12 - MAIS ESPAÇO APÓS INFORMAÇÕES BÁSICAS
+            doc.text(`Responsavel: ${item.usuario}`, margin + contentWidth / 2, y);
+            y += 12;
 
-            // Descrição - MAIS ESPAÇO ENTRE TÍTULO E TEXTO
             if (item.descricao) {
                 doc.setFont(undefined, 'bold');
-                doc.text('Descrição:', margin, y);
-                y += 8; // Aumentado de 6 para 8 - MAIS ESPAÇO APÓS TÍTULO
-
+                doc.text('Descricao:', margin, y);
+                y += 8;
                 doc.setFont(undefined, 'normal');
-                const descResult = addTextWithSpacing(item.descricao, margin + 5, y, contentWidth - 10, styles.small.size, 'normal', 6); // Aumentado line height
-                y += descResult.height + 10; // Aumentado de 8 para 10 - MAIS ESPAÇO APÓS DESCRIÇÃO
+                const descResult = addTextWithSpacing(item.descricao, margin + 5, y, contentWidth - 10, styles.small.size, 'normal', 6);
+                y += descResult.height + 10;
             }
 
-            // Justificativa - MAIS ESPAÇO ENTRE TÍTULO E TEXTO
             if (item.justificativa) {
                 doc.setFontSize(styles.small.size);
                 doc.setFont(undefined, 'bold');
                 doc.text('Justificativa:', margin, y);
-                y += 8; // Aumentado de 6 para 8 - MAIS ESPAÇO APÓS TÍTULO
-
-                const justResult = addTextWithSpacing(item.justificativa, margin + 5, y, contentWidth - 10, styles.tiny.size, 'normal', 5); // Aumentado line height
-                y += justResult.height + 12; // Aumentado de 10 para 12 - MAIS ESPAÇO APÓS JUSTIFICATIVA
+                y += 8;
+                const justResult = addTextWithSpacing(item.justificativa, margin + 5, y, contentWidth - 10, styles.tiny.size, 'normal', 5);
+                y += justResult.height + 12;
             }
 
-            // Chat de reprovação - MAIS ESPAÇO ENTRE TÍTULO E CONTEÚDO
-            if (item.tipo === 'REPROVACAO' && item.chatMessages.length > 0) {
+            if (item.tipo === 'REPROVACAO' && item.chatMessages.length) {
                 doc.setFontSize(styles.small.size);
                 doc.setFont(undefined, 'bold');
-                doc.text('HISTÓRICO DE COMUNICAÇÃO:', margin, y);
-                y += 10; // Aumentado de 8 para 10 - MAIS ESPAÇO APÓS TÍTULO
+                doc.text('HISTORICO DE COMUNICACAO:', margin, y);
+                y += 10;
 
-                item.chatMessages.forEach((msg) => {
-                    if (!checkSpace(35)) { // Aumentado de 30 para 35
+                item.chatMessages.forEach((message) => {
+                    if (!checkSpace(35)) {
                         newPage();
-                        addSection('HISTÓRICO DE ATIVIDADES (Continuação)');
-                        // Repetir o cabeçalho da atividade atual na nova página
-                        doc.setFillColor(245, 245, 245);
-                        doc.rect(margin, y, contentWidth, 14, 'F');
-                        doc.setDrawColor(200, 200, 200);
-                        doc.rect(margin, y, contentWidth, 14);
-                        doc.setFontSize(styles.normal.size);
-                        doc.setFont(undefined, 'bold');
-                        doc.text(`ATIVIDADE ${index + 1}: ${item.titulo} (continuação)`, margin + 5, y + 9);
-                        y += 18;
+                        addSection('HISTORICO DE ATIVIDADES (CONTINUACAO)');
                     }
 
-                    const dataHora = formatarDataHoraPDF(msg.data_hora || new Date().toISOString());
-                    const msgStartY = y;
+                    const messageStartY = y;
+                    const dataHora = formatarDataHoraPDF(message.data_hora || new Date().toISOString());
 
-                    // Container da mensagem - MAIOR
                     doc.setFillColor(250, 250, 250);
-                    doc.rect(margin, y, contentWidth, 28, 'F'); // Aumentado de 25 para 28
+                    doc.rect(margin, y, contentWidth, 28, 'F');
                     doc.setDrawColor(200, 200, 200);
                     doc.rect(margin, y, contentWidth, 28);
 
-                    // Cabeçalho da mensagem - MAIS ESPAÇO
                     doc.setFontSize(styles.tiny.size);
                     doc.setFont(undefined, 'bold');
-                    doc.text(`${msg.usuario || 'Usuário'} - ${dataHora}`, margin + 5, y + 7); // Ajustado para mais espaço
+                    doc.text(`${message.usuario || 'Usuario'} - ${dataHora}`, margin + 5, y + 7);
 
-                    // Conteúdo da mensagem - MAIS ESPAÇO ENTRE LINHAS
-                    const messageResult = addTextWithSpacing(msg.justificativa || '', margin + 5, y + 14, contentWidth - 10, styles.tiny.size, 'normal', 4.5); // Aumentado line height
+                    const messageResult = addTextWithSpacing(message.justificativa || '', margin + 5, y + 14, contentWidth - 10, styles.tiny.size, 'normal', 4.5);
+                    const neededHeight = Math.max(28, 20 + messageResult.height);
 
-                    // Ajustar altura do container se necessário
-                    const neededHeight = Math.max(28, 20 + messageResult.height); // Ajustado cálculo
                     if (neededHeight > 28) {
                         doc.setFillColor(250, 250, 250);
-                        doc.rect(margin, msgStartY, contentWidth, neededHeight, 'F');
+                        doc.rect(margin, messageStartY, contentWidth, neededHeight, 'F');
                         doc.setDrawColor(200, 200, 200);
-                        doc.rect(margin, msgStartY, contentWidth, neededHeight);
+                        doc.rect(margin, messageStartY, contentWidth, neededHeight);
                     }
 
-                    y += neededHeight + 8; // Aumentado de 6 para 8 - MAIS ESPAÇO ENTRE MENSAGENS
+                    y += neededHeight + 8;
                 });
 
-                y += 6; // Aumentado de 4 para 6 - MAIS ESPAÇO APÓS BLOCO DE CHAT
+                y += 6;
             }
 
-            // Linha divisória entre atividades - MAIS ESPAÇO
             if (index < historico.length - 1) {
                 doc.setDrawColor(200, 200, 200);
                 doc.line(margin, y, pageWidth - margin, y);
-                y += 15; // Aumentado de 12 para 15 - MAIS ESPAÇO APÓS LINHA DIVISÓRIA
+                y += 15;
             }
         });
     } else {
         doc.setFontSize(styles.normal.size);
         doc.text('Nenhuma atividade registrada no sistema', margin, y);
-        y += 16; // Aumentado de 15 para 16
+        y += 16;
     }
 
-    // ========== RODAPÉ ==========
     const totalPages = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= totalPages; i++) {
-        doc.setPage(i);
+    for (let page = 1; page <= totalPages; page += 1) {
+        doc.setPage(page);
         const footerY = doc.internal.pageSize.getHeight() - footerHeight + 5;
 
         doc.setDrawColor(200, 200, 200);
         doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
-
         doc.setFontSize(styles.tiny.size);
         doc.setTextColor(100, 100, 100);
-
         doc.text(`Workflow ID: ${workflowData.id}`, margin, footerY);
-        doc.text(`Página ${i} de ${totalPages}`, pageWidth / 2, footerY, { align: 'center' });
-        doc.text('Sistema de Gestão de Workflows', pageWidth - margin, footerY, { align: 'right' });
-
+        doc.text(`Pagina ${page} de ${totalPages}`, pageWidth / 2, footerY, { align: 'center' });
+        doc.text('Sistema de Gestao de Workflows', pageWidth - margin, footerY, { align: 'right' });
         doc.setTextColor(0, 0, 0);
     }
 }
 
 function calcularAlturaAtividade(item, doc, contentWidth) {
-    let altura = 45; // Altura base aumentada: cabeçalho + informações básicas
+    let altura = 45;
 
     if (item.descricao) {
         const lines = doc.splitTextToSize(item.descricao, contentWidth - 10);
-        altura += 18 + (lines.length * 6); // Título + conteúdo (aumentado)
+        altura += 18 + (lines.length * 6);
     }
 
     if (item.justificativa) {
         const lines = doc.splitTextToSize(item.justificativa, contentWidth - 10);
-        altura += 20 + (lines.length * 5); // Título + conteúdo (aumentado)
+        altura += 20 + (lines.length * 5);
     }
 
     if (item.tipo === 'REPROVACAO' && item.chatMessages.length > 0) {
-        altura += 16; // Título do chat (aumentado)
-        item.chatMessages.forEach(msg => {
-            const msgLines = doc.splitTextToSize(msg.justificativa || '', contentWidth - 10);
+        altura += 16;
+        item.chatMessages.forEach((message) => {
+            const msgLines = doc.splitTextToSize(message.justificativa || '', contentWidth - 10);
             altura += 36 + (msgLines.length * 4.5);
         });
     }
-    altura += 15;
-    return altura;
+
+    return altura + 15;
 }
 
 function formatarDataHoraPDF(dataHoraString) {
     try {
-        const data = new Date(dataHoraString);
-        return data.toLocaleString('pt-BR', {
+        return new Date(dataHoraString).toLocaleString('pt-BR', {
             day: '2-digit',
             month: '2-digit',
             year: 'numeric',
@@ -452,7 +400,19 @@ function formatarDataHoraPDF(dataHoraString) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function () {
+function formatarTamanhoArquivo(bytes) {
+    if (!bytes || bytes === 0) {
+        return '0 Bytes';
+    }
+
+    const units = ['Bytes', 'KB', 'MB', 'GB'];
+    const index = Math.floor(Math.log(bytes) / Math.log(1024));
+    const value = bytes / (1024 ** index);
+
+    return `${value.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
     const btnGerarPDF = document.getElementById('btnGerarPDF');
     if (btnGerarPDF) {
         btnGerarPDF.addEventListener('click', gerarRelatorioPDF);

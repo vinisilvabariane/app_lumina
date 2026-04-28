@@ -85,11 +85,11 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
                         <div class="hero-aside__meta">
                             <div>
                                 <span>Visual</span>
-                                <strong>Minimalista</strong>
+                                <strong>Editorial</strong>
                             </div>
                             <div>
-                                <span>Paleta</span>
-                                <strong>Preto, cinza e roxo</strong>
+                                <span>Experiencia</span>
+                                <strong>Clara e orientada a decisao</strong>
                             </div>
                         </div>
                     </div>
@@ -127,21 +127,25 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
 
             <section class="stats-grid" id="workflowStatsContainer">
                 <article class="stats-card stats-card--accent">
+                    <span class="stats-icon"><i class="fas fa-layer-group"></i></span>
                     <span class="stats-label">Total</span>
                     <strong class="stats-value" id="ativosCount">0</strong>
                     <span class="stats-meta">Workflows registrados</span>
                 </article>
                 <article class="stats-card">
+                    <span class="stats-icon"><i class="fas fa-spinner"></i></span>
                     <span class="stats-label">Ativos</span>
                     <strong class="stats-value" id="andamentoCount">0</strong>
                     <span class="stats-meta">Em andamento</span>
                 </article>
                 <article class="stats-card">
+                    <span class="stats-icon"><i class="fas fa-circle-check"></i></span>
                     <span class="stats-label">Aprovados</span>
                     <strong class="stats-value" id="aprovadosCount">0</strong>
                     <span class="stats-meta">Concluidos com sucesso</span>
                 </article>
                 <article class="stats-card">
+                    <span class="stats-icon"><i class="fas fa-triangle-exclamation"></i></span>
                     <span class="stats-label">Rejeitados</span>
                     <strong class="stats-value" id="rejeitadosCount">0</strong>
                     <span class="stats-meta">Demandam revisao</span>
@@ -275,6 +279,8 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/app/configs/Authenticator.php';
         <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+        <script src="/app/src/js/shared/http.js"></script>
+        <script src="/app/src/js/shared/ui.js"></script>
         <script src="/app/src/js/workflow/main.js"></script>
     </div>
 </body>

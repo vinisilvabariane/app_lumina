@@ -370,6 +370,28 @@ body {
     font-weight: 700;
 }
 
+.deadline-card--ok {
+    color: var(--success);
+    border-color: rgba(22, 163, 74, 0.18);
+    background: rgba(22, 163, 74, 0.08);
+}
+
+.deadline-card--today {
+    color: var(--warning);
+    border-color: rgba(202, 138, 4, 0.18);
+    background: rgba(202, 138, 4, 0.08);
+}
+
+.deadline-card--late {
+    color: var(--danger);
+    border-color: rgba(220, 38, 38, 0.18);
+    background: rgba(220, 38, 38, 0.08);
+}
+
+.deadline-card--neutral {
+    color: var(--text-muted);
+}
+
 .content-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 300px;
@@ -398,6 +420,11 @@ body {
     line-height: 1.8;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+#workflowDescricao.is-empty {
+    color: var(--text-muted);
+    font-style: italic;
 }
 
 .meta-list {
@@ -464,6 +491,125 @@ body {
     padding: 20px 24px 24px;
 }
 
+.insight-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+}
+
+.insight-chip {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--surface-soft);
+    padding: 16px 18px;
+}
+
+.insight-chip span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 800;
+}
+
+.insight-chip strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 0.98rem;
+    letter-spacing: -0.03em;
+}
+
+.empty-state-card {
+    min-height: 180px;
+    display: grid;
+    place-items: center;
+    gap: 10px;
+    text-align: center;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: var(--surface-soft);
+    padding: 28px;
+    color: var(--text-muted);
+}
+
+.empty-state-card i {
+    font-size: 1.8rem;
+    color: var(--primary);
+}
+
+.empty-state-card strong {
+    color: var(--text);
+}
+
+.empty-state-card--chat {
+    min-height: 220px;
+    border: 0;
+    background: transparent;
+}
+
+.person-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface-soft);
+    padding: 18px;
+}
+
+.person-card__identity {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.person-card__avatar {
+    width: 50px;
+    height: 50px;
+    display: grid;
+    place-items: center;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #7cecf0 0%, var(--primary) 100%);
+    color: #fff;
+}
+
+.person-card__identity strong,
+.attachment-card strong,
+.timeline-card h6 {
+    display: block;
+}
+
+.person-card__identity span,
+.attachment-card span,
+.timeline-card p,
+.timeline-card__meta {
+    color: var(--text-muted);
+}
+
+.attachment-card {
+    display: grid;
+    gap: 10px;
+    min-height: 100%;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface-soft);
+    padding: 18px;
+}
+
+.attachment-card__icon {
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border-radius: 16px;
+    background: rgba(31, 210, 216, 0.1);
+    color: var(--primary);
+    font-size: 1.25rem;
+}
+
 #responsaveisContainer .card,
 #anexosContainer .card {
     border: 1px solid var(--line);
@@ -500,10 +646,70 @@ body {
 .timeline-item {
     position: relative;
     padding-left: 26px;
+    margin-bottom: 18px;
 }
 
 .timeline-dot {
+    width: 40px;
+    height: 40px;
+    position: absolute;
+    left: -2px;
+    top: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    color: #fff;
     border: 3px solid #f8fafc;
+    z-index: 1;
+}
+
+.timeline-card {
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface-soft);
+    padding: 18px 18px 16px;
+}
+
+.timeline-card__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.timeline-card__head h6 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.timeline-card__head p {
+    margin: 6px 0 0;
+}
+
+.timeline-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.review-alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    margin-top: 14px;
+    padding: 12px 14px;
+}
+
+.review-alert--owner {
+    background: rgba(202, 138, 4, 0.08);
+    color: var(--warning);
+}
+
+.review-alert--user {
+    background: rgba(31, 210, 216, 0.08);
+    color: var(--primary);
 }
 
 .alert {
@@ -525,6 +731,18 @@ body {
 .modal-footer {
     border: 0;
     padding: 24px 24px 0;
+}
+
+.modal-header--success {
+    background: linear-gradient(135deg, rgba(22, 163, 74, 0.92), rgba(21, 128, 61, 0.96));
+    color: #fff;
+    border-radius: 26px 26px 0 0;
+}
+
+.modal-header--danger {
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.92), rgba(180, 35, 24, 0.96));
+    color: #fff;
+    border-radius: 26px 26px 0 0;
 }
 
 .modal-title {
@@ -587,29 +805,39 @@ body {
 #chatMessagesContainer {
     background: var(--surface-soft);
     border-radius: 0 0 26px 26px;
+    display: grid;
+    gap: 12px;
 }
 
-#chatMessagesContainer .bg-info {
-    background: linear-gradient(135deg, #33dfe4 0%, #0f7f92 100%) !important;
-    color: #ffffff !important;
-}
-
-#chatMessagesContainer .bg-light {
-    background: #ffffff !important;
-    color: var(--text) !important;
+.chat-bubble {
     border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 14px 16px;
 }
 
-#chatMessagesContainer .card {
-    border-radius: 18px;
+.chat-bubble--mine {
+    margin-left: auto;
+    background: linear-gradient(135deg, #33dfe4 0%, #0f7f92 100%);
+    color: #fff;
     border: 0;
-    box-shadow: 0 10px 24px rgba(17, 34, 68, 0.08);
 }
 
-#chatMessagesContainer .card-text,
-#chatMessagesContainer .fw-bold,
-#chatMessagesContainer small {
-    color: inherit !important;
+.chat-bubble--other {
+    margin-right: auto;
+    background: #fff;
+}
+
+.chat-bubble__meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 8px;
+    font-size: 0.84rem;
+}
+
+.chat-bubble p {
+    margin: 0;
+    line-height: 1.65;
 }
 
 .select2-container--default .select2-selection--single {
@@ -678,7 +906,8 @@ body {
 @media (max-width: 1100px) {
     .workflow-overview,
     .secondary-grid,
-    .content-grid {
+    .content-grid,
+    .insight-strip {
         grid-template-columns: 1fr;
     }
 
